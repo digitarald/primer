@@ -28,7 +28,7 @@ export async function generateCopilotInstructions(options: GenerateInstructionsO
   try {
     progress("Creating session...");
     const session = await client.createSession({
-      model: options.model ?? "gpt-4.1",
+      model: options.model ?? "gpt-5",
       streaming: true,
       systemMessage: {
         content: "You are an expert codebase analyst. Your task is to generate a concise .github/copilot-instructions.md file. Use the available tools (glob, view, grep) to explore the codebase. Output ONLY the final markdown content, no explanations.",

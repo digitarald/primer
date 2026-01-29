@@ -52,6 +52,7 @@ export function runCli(argv: string[]): void {
     .option("--model <name>", "Model for responses", "gpt-5")
     .option("--judge-model <name>", "Model for judging", "gpt-5")
     .option("--output <path>", "Write results JSON to file")
+    .option("--init", "Create a starter primer.eval.json file")
     .action(evalCommand);
 
   program

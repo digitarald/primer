@@ -1,5 +1,9 @@
 import fs from "fs/promises";
 import path from "path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
 
 type EvalCase = {
   prompt: string;
@@ -19,9 +23,10 @@ type EvalRunOptions = {
   model: string;
   judgeModel: string;
   outputPath?: string;
+  onProgress?: (message: string) => void;
 };
 
-type EvalResult = {
+export type EvalResult = {
   id: string;
   prompt: string;
   expectation: string;
@@ -32,35 +37,41 @@ type EvalResult = {
   rationale?: string;
 };
 
-export async function runEval(options: EvalRunOptions): Promise<{ summary: string }> {
+export async function runEval(options: EvalRunOptions): Promise<{ summary: string; results: EvalResult[] }> {
   const config = await loadConfig(options.configPath);
   const instructionFile = config.instructionFile ?? ".github/copilot-instructions.md";
   const instructionPath = path.resolve(options.repoPath, instructionFile);
   const instructionText = await readOptionalFile(instructionPath);
+  const progress = options.onProgress ?? (() => {});
 
+  progress("Starting Copilot SDK...");
+  const cliPath = await findCopilotCliPath();
   const sdk = await import("@github/copilot-sdk");
-  const client = new sdk.CopilotClient();
-  await client.start();
+  const client = new sdk.CopilotClient({ cliPath });
 
   try {
     const results: EvalResult[] = [];
+    const total = config.cases.length;
 
     for (const [index, testCase] of config.cases.entries()) {
       const id = testCase.id ?? `case-${index + 1}`;
       const prompt = buildPrompt(options.repoPath, testCase.prompt);
 
+      progress(`Running eval ${index + 1}/${total}: ${id} (without instructions)...`);
       const withoutInstructions = await askOnce(client, {
         prompt,
         model: options.model,
         systemMessage: config.systemMessage
       });
 
+      progress(`Running eval ${index + 1}/${total}: ${id} (with instructions)...`);
       const withInstructions = await askOnce(client, {
         prompt,
         model: options.model,
         systemMessage: [config.systemMessage, instructionText].filter(Boolean).join("\n\n")
       });
 
+      progress(`Running eval ${index + 1}/${total}: ${id} (judging)...`);
       const judgment = await judge(client, {
         model: options.judgeModel,
         prompt: testCase.prompt,
@@ -79,6 +90,8 @@ export async function runEval(options: EvalRunOptions): Promise<{ summary: strin
         score: judgment.score,
         rationale: judgment.rationale
       });
+
+      progress(`Eval ${index + 1}/${total}: ${id} → ${judgment.verdict} (score: ${judgment.score})`);
     }
 
     if (options.outputPath) {
@@ -92,7 +105,7 @@ export async function runEval(options: EvalRunOptions): Promise<{ summary: strin
     }
 
     const summary = formatSummary(results);
-    return { summary };
+    return { summary, results };
   } finally {
     await client.stop();
   }
@@ -110,14 +123,24 @@ async function askOnce(
 ): Promise<string> {
   const session = await client.createSession({
     model: options.model,
+    streaming: true,
+    infiniteSessions: { enabled: false },
     systemMessage: options.systemMessage
       ? { content: options.systemMessage }
       : undefined
   });
 
-  const response = await session.sendAndWait({ prompt: options.prompt });
+  let content = "";
+  session.on((event: { type: string; data?: Record<string, unknown> }) => {
+    if (event.type === "assistant.message_delta") {
+      const delta = event.data?.deltaContent as string | undefined;
+      if (delta) content += delta;
+    }
+  });
+
+  await session.sendAndWait({ prompt: options.prompt }, 120000);
   await session.destroy();
-  return response?.data?.content?.trim() ?? "";
+  return content.trim();
 }
 
 type JudgeOptions = {
@@ -140,8 +163,18 @@ async function judge(
 ): Promise<JudgeResult> {
   const session = await client.createSession({
     model: options.model,
+    streaming: true,
+    infiniteSessions: { enabled: false },
     systemMessage: {
       content: "You are a strict evaluator. Return JSON with keys: verdict (pass|fail|unknown), score (0-100), rationale. Do not include any other text."
+    }
+  });
+
+  let content = "";
+  session.on((event: { type: string; data?: Record<string, unknown> }) => {
+    if (event.type === "assistant.message_delta") {
+      const delta = event.data?.deltaContent as string | undefined;
+      if (delta) content += delta;
     }
   });
 
@@ -159,10 +192,9 @@ async function judge(
     "Return JSON only."
   ].join("\n");
 
-  const response = await session.sendAndWait({ prompt });
+  await session.sendAndWait({ prompt }, 120000);
   await session.destroy();
 
-  const content = response?.data?.content ?? "";
   return parseJudge(content);
 }
 
@@ -189,6 +221,36 @@ function parseJudge(content: string): JudgeResult {
 async function loadConfig(configPath: string): Promise<EvalConfig> {
   const raw = await fs.readFile(configPath, "utf8");
   return JSON.parse(raw) as EvalConfig;
+}
+
+async function findCopilotCliPath(): Promise<string> {
+  // Try standard PATH first
+  try {
+    const { stdout } = await execFileAsync("which", ["copilot"], { timeout: 5000 });
+    return stdout.trim();
+  } catch {
+    // Ignore - will try VS Code location
+  }
+
+  // VS Code Copilot Chat extension location
+  const home = process.env.HOME ?? "";
+  const vscodeLocations = [
+    `${home}/Library/Application Support/Code - Insiders/User/globalStorage/github.copilot-chat/copilotCli/copilot`,
+    `${home}/Library/Application Support/Code/User/globalStorage/github.copilot-chat/copilotCli/copilot`,
+    `${home}/.vscode-insiders/extensions/github.copilot-chat-*/copilotCli/copilot`,
+    `${home}/.vscode/extensions/github.copilot-chat-*/copilotCli/copilot`,
+  ];
+
+  for (const location of vscodeLocations) {
+    try {
+      await fs.access(location);
+      return location;
+    } catch {
+      // Try next location
+    }
+  }
+
+  throw new Error("Copilot CLI not found. Install GitHub Copilot Chat extension in VS Code.");
 }
 
 async function readOptionalFile(filePath: string): Promise<string> {

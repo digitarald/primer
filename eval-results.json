@@ -1,0 +1,17 @@
+{
+  "repoPath": "/Users/pierceboggan/Documents/get-ready",
+  "model": "gpt-4.1",
+  "judgeModel": "gpt-4.1",
+  "results": [
+    {
+      "id": "overview",
+      "prompt": "Summarize what this application does and list the main entrypoints.",
+      "expectation": "Mentions the CLI entrypoint in src/index.ts and that this is the Primer CLI.",
+      "withInstructions": "This application, Primer, is a CLI tool that analyzes your codebase and generates `.github/copilot-instructions.md` files to help AI coding assistants (like Copilot) better understand your project. It detects languages, frameworks, and package managers, and can generate, preview, and save project-specific instructions using the Copilot SDK. \n\n**Main entrypoints:**\n- `src/index.ts` (primary entry)\n- `src/cli.ts` (CLI setup)\n- CLI commands in `src/commands/` (e.g., `analyze.ts`, `generate.ts`, `instructions.tsx`, `tui.tsx`, `pr.ts`, `eval.ts`, etc.)",
+      "withoutInstructions": "This application, Primer, is a CLI tool that analyzes your codebase and generates `.github/copilot-instructions.md` files to help AI coding assistants (like Copilot) better understand your project. It detects languages, frameworks, and package managers, and uses the Copilot SDK to generate project-specific instructions. \n\n**Main entrypoints:**\n- `src/index.ts`: Primary entrypoint for the CLI.\n- `src/cli.ts`: Sets up the command-line interface using Commander.\n- `src/commands/`: Contains subcommands for analyze, generate, and instructions.\n- `src/ui/tui.tsx`: Entry for the interactive terminal UI (TUI).",
+      "verdict": "pass",
+      "score": 100,
+      "rationale": "Both responses mention the CLI entrypoint in src/index.ts and that this is the Primer CLI. Response B is slightly more complete, but both meet the expectation."
+    }
+  ]
+}

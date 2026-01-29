@@ -4,12 +4,13 @@ import fs from "fs/promises";
 import path from "path";
 import { analyzeRepo, RepoAnalysis } from "../services/analyzer";
 import { generateCopilotInstructions } from "../services/instructions";
+import { runEval, type EvalResult } from "../services/evaluator";
 
 type Props = {
   repoPath: string;
 };
 
-type Status = "idle" | "analyzing" | "generating" | "preview" | "done" | "error";
+type Status = "idle" | "analyzing" | "generating" | "evaluating" | "preview" | "done" | "error";
 
 export function PrimerTui({ repoPath }: Props): React.JSX.Element {
   const app = useApp();
@@ -17,6 +18,7 @@ export function PrimerTui({ repoPath }: Props): React.JSX.Element {
   const [analysis, setAnalysis] = useState<RepoAnalysis | null>(null);
   const [message, setMessage] = useState<string>("");
   const [generatedContent, setGeneratedContent] = useState<string>("");
+  const [evalResults, setEvalResults] = useState<EvalResult[] | null>(null);
   const repoLabel = useMemo(() => repoPath, [repoPath]);
 
   useInput(async (input: string, key: Key) => {
@@ -88,6 +90,38 @@ export function PrimerTui({ repoPath }: Props): React.JSX.Element {
         }
       }
     }
+
+    if (input.toLowerCase() === "e") {
+      const configPath = path.join(repoPath, "primer.eval.json");
+      try {
+        await fs.access(configPath);
+      } catch {
+        setStatus("error");
+        setMessage("No primer.eval.json found. Run 'primer eval --init' to create one.");
+        return;
+      }
+      
+      setStatus("evaluating");
+      setMessage("Running evals... (this may take a few minutes)");
+      setEvalResults(null);
+      try {
+        const { results } = await runEval({
+          configPath,
+          repoPath,
+          model: "gpt-4.1",
+          judgeModel: "gpt-4.1",
+          // Note: onProgress removed - causes issues with SDK in React/Ink context
+        });
+        setEvalResults(results);
+        const passed = results.filter(r => r.verdict === "pass").length;
+        const failed = results.filter(r => r.verdict === "fail").length;
+        setStatus("done");
+        setMessage(`Eval complete: ${passed} pass, ${failed} fail out of ${results.length} cases.`);
+      } catch (error) {
+        setStatus("error");
+        setMessage(error instanceof Error ? error.message : "Eval failed.");
+      }
+    }
   });
 
   const statusLabel = status === "idle" ? "ready (awaiting input)" : status;
@@ -137,11 +171,21 @@ export function PrimerTui({ repoPath }: Props): React.JSX.Element {
           <Text color="gray">{truncatedPreview}</Text>
         </Box>
       )}
+      {evalResults && evalResults.length > 0 && (
+        <Box flexDirection="column" marginTop={1} borderStyle="single" borderColor="gray" paddingX={1}>
+          <Text color="cyan" bold>Eval Results:</Text>
+          {evalResults.map((r) => (
+            <Text key={r.id} color={r.verdict === "pass" ? "green" : r.verdict === "fail" ? "red" : "yellow"}>
+              {r.verdict === "pass" ? "✓" : r.verdict === "fail" ? "✗" : "?"} {r.id}: {r.verdict} (score: {r.score})
+            </Text>
+          ))}
+        </Box>
+      )}
       <Box marginTop={1}>
         {status === "preview" ? (
           <Text color="cyan">Keys: [S] Save  [D] Discard  [Q] Quit</Text>
         ) : (
-          <Text color="cyan">Keys: [A] Analyze  [G] Generate  [Q] Quit</Text>
+          <Text color="cyan">Keys: [A] Analyze  [G] Generate  [E] Eval  [Q] Quit</Text>
         )}
       </Box>
     </Box>
