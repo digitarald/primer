@@ -113,7 +113,7 @@ npx tsx src/index.ts analyze /path/to/repo --json
 
 ### Generate Configs
 
-Generate MCP or VS Code configuration files:
+Generate configuration files for your repo:
 
 ```bash
 # Generate MCP config
@@ -121,6 +121,39 @@ npx tsx src/index.ts generate mcp
 
 # Generate VS Code settings
 npx tsx src/index.ts generate vscode --force
+
+# Generate custom prompts
+npx tsx src/index.ts generate prompts
+
+# Generate agent configs
+npx tsx src/index.ts generate agents
+
+# Generate .aiignore file
+npx tsx src/index.ts generate aiignore
+```
+
+### Manage Templates
+
+View available instruction templates:
+
+```bash
+npx tsx src/index.ts templates
+```
+
+### Configuration
+
+View and manage Primer configuration:
+
+```bash
+npx tsx src/index.ts config
+```
+
+### Update
+
+Check for and apply updates:
+
+```bash
+npx tsx src/index.ts update
 ```
 
 ### Create Pull Requests
