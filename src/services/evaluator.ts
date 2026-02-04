@@ -632,6 +632,13 @@ function buildTrajectoryViewerHtml(data: Record<string, unknown>): string {
       .summary { margin-bottom: 24px; color: #b7bdc8; }
       .layout { display: grid; grid-template-columns: 280px 1fr; gap: 16px; }
       .panel { background: #151924; border: 1px solid #23283b; border-radius: 10px; padding: 12px; }
+      .section { margin-top: 16px; }
+      .section h3 { margin: 8px 0; font-size: 14px; color: #c7ccd6; }
+      .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+      .chip { background: #1e2232; border: 1px solid #2c3250; border-radius: 999px; padding: 2px 8px; font-size: 12px; color: #c9d1e3; }
+      .muted { color: #8a93a5; font-size: 12px; }
+      .filters { display: flex; gap: 12px; align-items: center; margin-top: 8px; }
+      .filters label { font-size: 12px; color: #b7bdc8; }
       .case { padding: 8px; border-radius: 8px; cursor: pointer; margin-bottom: 6px; }
       .case.active { background: #23283b; }
       .case span { display: block; font-size: 12px; color: #9aa3b2; }
@@ -645,6 +652,7 @@ function buildTrajectoryViewerHtml(data: Record<string, unknown>): string {
   <body>
     <h1>Primer Eval Trajectory</h1>
     <div class="summary" id="summary"></div>
+    <div class="panel" id="toolSummary"></div>
     <div class="layout">
       <div class="panel" id="caseList"></div>
       <div class="panel" id="caseDetails"></div>
@@ -652,6 +660,7 @@ function buildTrajectoryViewerHtml(data: Record<string, unknown>): string {
     <script>
       const data = ${serialized};
       const summaryEl = document.getElementById('summary');
+      const toolSummaryEl = document.getElementById('toolSummary');
       const caseListEl = document.getElementById('caseList');
       const caseDetailsEl = document.getElementById('caseDetails');
 
@@ -663,6 +672,8 @@ function buildTrajectoryViewerHtml(data: Record<string, unknown>): string {
         .replace(/'/g, '&#39;');
 
       const results = data.results || [];
+      let activeCaseId = null;
+      let toolsOnly = false;
       summaryEl.textContent =
         'Repo: ' +
         (data.repoPath || 'unknown') +
@@ -670,6 +681,46 @@ function buildTrajectoryViewerHtml(data: Record<string, unknown>): string {
         (data.model || 'unknown') +
         ' • Judge: ' +
         (data.judgeModel || 'unknown');
+
+      function collectToolCounts(events) {
+        const counts = { total: 0, byName: {} };
+        if (!events) return counts;
+        events.forEach((event) => {
+          if (event.type !== 'tool.execution_start') return;
+          const name = (event.data && event.data.toolName) || 'unknown';
+          counts.total += 1;
+          counts.byName[name] = (counts.byName[name] || 0) + 1;
+        });
+        return counts;
+      }
+
+      function mergeToolCounts(target, source) {
+        target.total += source.total;
+        Object.entries(source.byName).forEach(([name, count]) => {
+          target.byName[name] = (target.byName[name] || 0) + count;
+        });
+      }
+
+      function renderToolChips(counts, limit) {
+        const entries = Object.entries(counts.byName)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, limit);
+        if (!entries.length) return '<span class="muted">No tool calls recorded.</span>';
+        return '<div class="chips">' +
+          entries.map(([name, count]) => '<span class="chip">' + name + ': ' + count + '</span>').join('') +
+          '</div>';
+      }
+
+      function renderOverallToolSummary() {
+        const overall = { total: 0, byName: {} };
+        results.forEach((result) => mergeToolCounts(overall, collectToolCounts(result.trajectory || [])));
+        toolSummaryEl.innerHTML =
+          '<div>' +
+          '<strong>Tool call summary (all cases)</strong>' +
+          '<div class="muted">Total tool calls: ' + overall.total + '</div>' +
+          renderToolChips(overall, 10) +
+          '</div>';
+      }
 
       function renderCaseList(activeId) {
         caseListEl.innerHTML = '';
@@ -725,9 +776,12 @@ function buildTrajectoryViewerHtml(data: Record<string, unknown>): string {
 
       function renderTrajectory(events) {
         if (!events || !events.length) return '<p>No trajectory events captured.</p>';
+        const filtered = toolsOnly
+          ? events.filter((event) => event.type.startsWith('tool.'))
+          : events;
         return (
           '<div class="trajectory">' +
-          events
+          filtered
             .map(
               (event) =>
                 '<div class="event">' +
@@ -754,11 +808,23 @@ function buildTrajectoryViewerHtml(data: Record<string, unknown>): string {
           caseDetailsEl.innerHTML = '<p>No results available.</p>';
           return;
         }
+        activeCaseId = result.id;
         renderCaseList(result.id);
+        const toolCounts = collectToolCounts(result.trajectory || []);
         caseDetailsEl.innerHTML =
           '<h2>' +
           escapeHtml(result.id) +
           '</h2>' +
+          '<div class="filters">' +
+          '<label><input type="checkbox" id="toolsOnly" ' + (toolsOnly ? 'checked' : '') + ' /> Tools only</label>' +
+          '</div>' +
+          '<div class="section">' +
+          '<h3>Tool calls</h3>' +
+          '<div class="muted">Total tool calls: ' + toolCounts.total + '</div>' +
+          renderToolChips(toolCounts, 8) +
+          '</div>' +
+          '<div class="section">' +
+          '<h3>Summary</h3>' +
           '<p><strong>Verdict:</strong> ' +
           escapeHtml(result.verdict ?? 'unknown') +
           ' (score: ' +
@@ -770,12 +836,26 @@ function buildTrajectoryViewerHtml(data: Record<string, unknown>): string {
           '<p><strong>Expectation:</strong> ' +
           escapeHtml(result.expectation ?? '') +
           '</p>' +
+          '</div>' +
+          '<div class="section">' +
           '<h3>Metrics</h3>' +
           renderMetrics(result.metrics) +
+          '</div>' +
+          '<div class="section">' +
           '<h3>Trajectory</h3>' +
-          renderTrajectory(result.trajectory);
+          renderTrajectory(result.trajectory) +
+          '</div>';
+
+        const toolsCheckbox = document.getElementById('toolsOnly');
+        if (toolsCheckbox) {
+          toolsCheckbox.addEventListener('change', (event) => {
+            toolsOnly = event.target.checked;
+            renderCaseDetails(activeCaseId);
+          });
+        }
       }
 
+      renderOverallToolSummary();
       renderCaseDetails(results[0]?.id);
     </script>
   </body>

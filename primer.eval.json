@@ -2,9 +2,19 @@
   "instructionFile": ".github/copilot-instructions.md",
   "cases": [
     {
-      "id": "overview",
-      "prompt": "Summarize what this application does and list the main entrypoints.",
-      "expectation": "Mentions the CLI entrypoint in src/index.ts and that this is the Primer CLI."
+      "id": "case-1",
+      "prompt": "What is the main purpose of the Primer CLI tool and what are its key features?",
+      "expectation": "Primer is a CLI tool that analyzes codebases and generates .github/copilot-instructions.md files to help AI coding assistants understand projects better. Key features include repository analysis, AI-powered instruction generation, batch processing, an evaluation framework, readiness reports, GitHub integration, an interactive TUI, and config generation."
+    },
+    {
+      "id": "case-2",
+      "prompt": "How do you run the Primer CLI locally to analyze a repository and generate VS Code settings?",
+      "expectation": "To analyze a repository, run `npx tsx src/index.ts analyze [path] --json`. To generate VS Code settings, run `npx tsx src/index.ts generate vscode [path] [--force]`."
+    },
+    {
+      "id": "case-3",
+      "prompt": "Where should new CLI commands and core logic be placed in the Primer codebase, and what architectural patterns are followed?",
+      "expectation": "New CLI commands should be placed in src/commands/, and core logic in src/services/. The architecture uses Commander for CLI, Ink/React for TUI, and simple-git/Octokit for GitHub automation, following strict ESM TypeScript conventions."
     }
   ]
 }

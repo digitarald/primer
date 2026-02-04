@@ -1,6 +1,7 @@
 import path from "path";
 import fs from "fs/promises";
 import { runEval } from "../services/evaluator";
+import { generateEvalScaffold } from "../services/evalScaffold";
 
 type EvalOptions = {
   repo?: string;
@@ -8,27 +9,7 @@ type EvalOptions = {
   judgeModel?: string;
   output?: string;
   init?: boolean;
-};
-
-const EVAL_SCAFFOLD = {
-  instructionFile: ".github/copilot-instructions.md",
-  cases: [
-    {
-      id: "project-overview",
-      prompt: "Summarize what this project does and list the main entry points.",
-      expectation: "Should mention the primary purpose and key files/directories."
-    },
-    {
-      id: "tech-stack",
-      prompt: "What languages and frameworks does this project use?",
-      expectation: "Should correctly identify the main languages and frameworks."
-    },
-    {
-      id: "build-commands",
-      prompt: "How do I build and test this project?",
-      expectation: "Should provide the correct build and test commands from package.json or equivalent."
-    }
-  ]
+  count?: string;
 };
 
 export async function evalCommand(configPathArg: string | undefined, options: EvalOptions): Promise<void> {
@@ -37,6 +18,7 @@ export async function evalCommand(configPathArg: string | undefined, options: Ev
   // Handle --init flag
   if (options.init) {
     const outputPath = path.join(repoPath, "primer.eval.json");
+    const desiredCount = Math.max(1, Number.parseInt(options.count ?? "5", 10) || 5);
     try {
       await fs.access(outputPath);
       console.error(`primer.eval.json already exists at ${outputPath}`);
@@ -45,7 +27,12 @@ export async function evalCommand(configPathArg: string | undefined, options: Ev
     } catch {
       // File doesn't exist, create it
     }
-    await fs.writeFile(outputPath, JSON.stringify(EVAL_SCAFFOLD, null, 2), "utf8");
+    const scaffold = await generateEvalScaffold({
+      repoPath,
+      count: desiredCount,
+      model: options.model
+    });
+    await fs.writeFile(outputPath, JSON.stringify(scaffold, null, 2), "utf8");
     console.log(`Created ${outputPath}`);
     console.log("Edit the file to add your own test cases, then run 'primer eval' to test.");
     return;

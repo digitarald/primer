@@ -5,6 +5,7 @@ import path from "path";
 import { analyzeRepo, RepoAnalysis } from "../services/analyzer";
 import { generateCopilotInstructions } from "../services/instructions";
 import { runEval, type EvalResult } from "../services/evaluator";
+import { generateEvalScaffold } from "../services/evalScaffold";
 import { AnimatedBanner, StaticBanner } from "./AnimatedBanner";
 import { BatchTui } from "./BatchTui";
 import { getGitHubToken } from "../services/github";
@@ -20,6 +21,7 @@ type Status =
   | "idle"
   | "analyzing"
   | "generating"
+  | "bootstrapping"
   | "evaluating"
   | "preview"
   | "done"
@@ -28,59 +30,12 @@ type Status =
   | "bootstrapEvalCount"
   | "bootstrapEvalConfirm";
 
-type EvalCase = {
-  id: string;
-  prompt: string;
-  expectation: string;
-};
-
 type EvalConfig = {
   instructionFile?: string;
-  cases: EvalCase[];
+  cases: Array<{ id: string; prompt: string; expectation: string }>;
   systemMessage?: string;
   outputPath?: string;
 };
-
-function buildBootstrapEvalConfig(count: number): EvalConfig {
-  const templates = [
-    {
-      prompt: "Summarize this repository's purpose and main entry points. Use the README and package.json if available.",
-      expectation: "A concise summary of repo purpose plus key entry points (CLI or main files) and how to run it."
-    },
-    {
-      prompt: "Identify the primary languages, frameworks, and package manager used in this repo.",
-      expectation: "A brief list of languages/frameworks and the detected package manager, with short justification."
-    },
-    {
-      prompt: "Draft a minimal .github/copilot-instructions.md tailored to this repo's conventions.",
-      expectation: "A short instruction file referencing observed conventions, avoiding assumptions or secrets."
-    },
-    {
-      prompt: "Describe how to run the CLI and list its core commands and flags.",
-      expectation: "Clear usage instructions with command names and key flags derived from docs or source."
-    },
-    {
-      prompt: "Propose an eval case that checks consistency between CLI and TUI behaviors.",
-      expectation: "One eval case that validates parity between CLI and TUI outputs or workflows."
-    }
-  ];
-
-  const cases = Array.from({ length: count }, (_, index) => {
-    const template = templates[index % templates.length];
-    const variant = Math.floor(index / templates.length);
-    const suffix = variant > 0 ? ` (variant ${variant + 1})` : "";
-    return {
-      id: `case-${index + 1}`,
-      prompt: `${template.prompt}${suffix}`,
-      expectation: `${template.expectation}${suffix}`
-    } satisfies EvalCase;
-  });
-
-  return {
-    instructionFile: ".github/copilot-instructions.md",
-    cases
-  };
-}
 
 export function PrimerTui({ repoPath, skipAnimation = false }: Props): React.JSX.Element {
   const app = useApp();
@@ -97,6 +52,34 @@ export function PrimerTui({ repoPath, skipAnimation = false }: Props): React.JSX
 
   const handleAnimationComplete = () => {
     setStatus("idle");
+  };
+
+  const bootstrapEvalConfig = async (count: number, force: boolean): Promise<void> => {
+    const configPath = path.join(repoPath, "primer.eval.json");
+    try {
+      setStatus("bootstrapping");
+      setMessage("Generating eval cases with Copilot SDK...");
+      const config = await generateEvalScaffold({
+        repoPath,
+        count,
+        model: "gpt-4.1",
+        onProgress: (msg) => setMessage(msg)
+      });
+      const resultMessage = await safeWriteFile(configPath, JSON.stringify(config, null, 2), force);
+      setStatus("done");
+      setMessage(`Bootstrapped eval: ${resultMessage}`);
+    } catch (error) {
+      setStatus("error");
+      const message = error instanceof Error ? error.message : "Failed to generate eval cases.";
+      if (message.toLowerCase().includes("auth") || message.toLowerCase().includes("login")) {
+        setMessage(`${message} Run 'copilot' then '/login' in a separate terminal.`);
+      } else {
+        setMessage(message);
+      }
+    } finally {
+      setEvalCaseCountInput("");
+      setEvalBootstrapCount(null);
+    }
   };
 
   useInput(async (input: string, key: Key) => {
@@ -152,12 +135,7 @@ export function PrimerTui({ repoPath, skipAnimation = false }: Props): React.JSX
           setStatus("bootstrapEvalConfirm");
           setMessage("primer.eval.json exists. Overwrite? (Y/N)");
         } catch {
-          const config = buildBootstrapEvalConfig(count);
-          const resultMessage = await safeWriteFile(configPath, JSON.stringify(config, null, 2), false);
-          setStatus("done");
-          setMessage(`Bootstrapped eval: ${resultMessage}`);
-          setEvalCaseCountInput("");
-          setEvalBootstrapCount(null);
+          await bootstrapEvalConfig(count, false);
         }
         return;
       }
@@ -183,19 +161,7 @@ export function PrimerTui({ repoPath, skipAnimation = false }: Props): React.JSX
           setMessage("Missing eval case count. Restart bootstrap.");
           return;
         }
-        try {
-          const configPath = path.join(repoPath, "primer.eval.json");
-          const config = buildBootstrapEvalConfig(count);
-          const resultMessage = await safeWriteFile(configPath, JSON.stringify(config, null, 2), true);
-          setStatus("done");
-          setMessage(`Bootstrapped eval: ${resultMessage}`);
-        } catch (error) {
-          setStatus("error");
-          setMessage(error instanceof Error ? error.message : "Failed to write eval config.");
-        } finally {
-          setEvalCaseCountInput("");
-          setEvalBootstrapCount(null);
-        }
+        await bootstrapEvalConfig(count, true);
         return;
       }
 
