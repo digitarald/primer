@@ -263,6 +263,7 @@ export function PrimerTui({ repoPath, skipAnimation = false }: Props): React.JSX
 
     if (input.toLowerCase() === "e") {
       const configPath = path.join(repoPath, "primer.eval.json");
+      const outputPath = path.join(repoPath, "eval-results.json");
       try {
         await fs.access(configPath);
       } catch {
@@ -281,6 +282,7 @@ export function PrimerTui({ repoPath, skipAnimation = false }: Props): React.JSX
           repoPath,
           model: "gpt-4.1",
           judgeModel: "gpt-4.1",
+          outputPath,
           // Note: onProgress removed - causes issues with SDK in React/Ink context
         });
         setEvalResults(results);
@@ -303,7 +305,16 @@ export function PrimerTui({ repoPath, skipAnimation = false }: Props): React.JSX
     }
   });
 
-  const statusLabel = status === "intro" ? "..." : status === "idle" ? "ready (awaiting input)" : status;
+  const statusLabel = status === "intro" ? "starting" : status === "idle" ? "ready" : status;
+  const statusColor = status === "error" ? "red" : status === "done" ? "green" : "yellow";
+  const formatTokens = (result: EvalResult): string => {
+    const withUsage = result.metrics?.withInstructions?.tokenUsage;
+    const withoutUsage = result.metrics?.withoutInstructions?.tokenUsage;
+    const withTotal = withUsage?.totalTokens ?? (withUsage ? (withUsage.promptTokens ?? 0) + (withUsage.completionTokens ?? 0) : undefined);
+    const withoutTotal = withoutUsage?.totalTokens ?? (withoutUsage ? (withoutUsage.promptTokens ?? 0) + (withoutUsage.completionTokens ?? 0) : undefined);
+    if (withTotal == null && withoutTotal == null) return "tokens n/a";
+    return `tokens w/: ${withTotal ?? "n/a"} • w/o: ${withoutTotal ?? "n/a"}`;
+  };
 
   // Truncate preview to fit terminal
   const previewLines = generatedContent.split("\n").slice(0, 20);
@@ -315,26 +326,41 @@ export function PrimerTui({ repoPath, skipAnimation = false }: Props): React.JSX
   }
 
   return (
-    <Box flexDirection="column" padding={1} borderStyle="round">
+    <Box flexDirection="column" padding={1} borderStyle="round" borderColor="magenta">
       {status === "intro" ? (
         <AnimatedBanner onComplete={handleAnimationComplete} />
       ) : (
         <StaticBanner />
       )}
-      <Text color="cyan">Prime your repo for AI.</Text>
+      <Box marginTop={1} justifyContent="space-between">
+        <Text color="cyanBright">Prime your repo for AI</Text>
+        <Text color={statusColor}>● {statusLabel}</Text>
+      </Box>
       <Text color="gray">Repo: {repoLabel}</Text>
-      <Box flexDirection="column" marginTop={1}>
-        <Text>Status: {statusLabel}</Text>
-        {analysis && (
-          <Box flexDirection="column" marginTop={1}>
+
+      <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="gray" paddingX={1}>
+        <Text color="gray" bold>
+          Repository signals
+        </Text>
+        {analysis ? (
+          <Box flexDirection="column">
             <Text>Languages: {analysis.languages.join(", ") || "unknown"}</Text>
             <Text>Frameworks: {analysis.frameworks.join(", ") || "none"}</Text>
             <Text>Package manager: {analysis.packageManager ?? "unknown"}</Text>
+            {analysis.isMonorepo && (
+              <Text>Monorepo: yes ({analysis.apps?.length ?? 0} apps)</Text>
+            )}
           </Box>
+        ) : (
+          <Text color="gray">Run analysis to populate repo signals.</Text>
         )}
       </Box>
-      <Box marginTop={1}>
-        <Text>{message}</Text>
+
+      <Box marginTop={1} borderStyle="round" borderColor="gray" paddingX={1}>
+        <Text color="gray" bold>
+          Activity
+        </Text>
+        <Text>{message || "Awaiting input."}</Text>
       </Box>
       {status === "bootstrapEvalCount" && (
         <Box marginTop={1}>
@@ -352,7 +378,7 @@ export function PrimerTui({ repoPath, skipAnimation = false }: Props): React.JSX
           <Text color="cyan" bold>Eval Results:</Text>
           {evalResults.map((r) => (
             <Text key={r.id} color={r.verdict === "pass" ? "green" : r.verdict === "fail" ? "red" : "yellow"}>
-              {r.verdict === "pass" ? "✓" : r.verdict === "fail" ? "✗" : "?"} {r.id}: {r.verdict} (score: {r.score})
+              {r.verdict === "pass" ? "✓" : r.verdict === "fail" ? "✗" : "?"} {r.id}: {r.verdict} (score: {r.score}) • {formatTokens(r)}
             </Text>
           ))}
           {evalViewerPath && (

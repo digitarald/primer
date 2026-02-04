@@ -466,9 +466,13 @@ function findLatestToolByName(
 
 function extractTokenUsage(data: Record<string, unknown> | undefined): TokenUsage | null {
   if (!data) return null;
-  const usage = (data.usage ?? data.tokenUsage ?? data.tokens) as Record<string, unknown> | undefined;
-  const promptTokens = getNumber(usage?.prompt_tokens ?? usage?.promptTokens ?? data.promptTokens ?? data.inputTokens);
-  const completionTokens = getNumber(usage?.completion_tokens ?? usage?.completionTokens ?? data.completionTokens ?? data.outputTokens);
+  const usage = findUsageObject(data);
+  const promptTokens = getNumber(
+    usage?.prompt_tokens ?? usage?.promptTokens ?? data.promptTokens ?? data.inputTokens
+  );
+  const completionTokens = getNumber(
+    usage?.completion_tokens ?? usage?.completionTokens ?? data.completionTokens ?? data.outputTokens
+  );
   const totalTokens = getNumber(usage?.total_tokens ?? usage?.totalTokens ?? data.totalTokens);
 
   if (promptTokens == null && completionTokens == null && totalTokens == null) {
@@ -480,6 +484,63 @@ function extractTokenUsage(data: Record<string, unknown> | undefined): TokenUsag
     completionTokens: completionTokens ?? undefined,
     totalTokens: totalTokens ?? undefined
   };
+}
+
+function findUsageObject(data: Record<string, unknown>): Record<string, unknown> | undefined {
+  const direct = (data.usage ?? data.tokenUsage ?? data.tokens) as Record<string, unknown> | undefined;
+  if (direct) return direct;
+
+  const candidates = [
+    data.response,
+    data.result,
+    data.message,
+    data.metrics,
+    data.output
+  ];
+
+  for (const candidate of candidates) {
+    if (candidate && typeof candidate === "object") {
+      const nested = (candidate as Record<string, unknown>).usage ?? (candidate as Record<string, unknown>).tokenUsage;
+      if (nested && typeof nested === "object") return nested as Record<string, unknown>;
+    }
+  }
+
+  return scanForUsage(data, 0);
+}
+
+function scanForUsage(value: unknown, depth: number): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || depth > 4) return undefined;
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const found = scanForUsage(entry, depth + 1);
+      if (found) return found;
+    }
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+  if (hasTokenFields(record)) return record;
+
+  for (const entry of Object.values(record)) {
+    const found = scanForUsage(entry, depth + 1);
+    if (found) return found;
+  }
+
+  return undefined;
+}
+
+function hasTokenFields(record: Record<string, unknown>): boolean {
+  const keys = Object.keys(record);
+  return (
+    keys.includes("prompt_tokens") ||
+    keys.includes("completion_tokens") ||
+    keys.includes("total_tokens") ||
+    keys.includes("promptTokens") ||
+    keys.includes("completionTokens") ||
+    keys.includes("totalTokens") ||
+    keys.includes("inputTokens") ||
+    keys.includes("outputTokens")
+  );
 }
 
 function getNumber(value: unknown): number | null {
@@ -501,6 +562,15 @@ function mergeTokenUsage(existing: TokenUsage, next: TokenUsage): TokenUsage {
 
 function normalizeTokenUsage(usage: TokenUsage): TokenUsage | undefined {
   if (!usage.promptTokens && !usage.completionTokens && !usage.totalTokens) return undefined;
+  if (!usage.totalTokens) {
+    const prompt = usage.promptTokens ?? 0;
+    const completion = usage.completionTokens ?? 0;
+    const total = prompt + completion;
+    return {
+      ...usage,
+      totalTokens: total || undefined
+    };
+  }
   return usage;
 }
 
@@ -593,16 +663,22 @@ function buildTrajectoryViewerHtml(data: Record<string, unknown>): string {
         .replace(/'/g, '&#39;');
 
       const results = data.results || [];
-      summaryEl.textContent = `Repo: ${data.repoPath || 'unknown'} • Model: ${data.model || 'unknown'} • Judge: ${data.judgeModel || 'unknown'}`;
+      summaryEl.textContent =
+        'Repo: ' +
+        (data.repoPath || 'unknown') +
+        ' • Model: ' +
+        (data.model || 'unknown') +
+        ' • Judge: ' +
+        (data.judgeModel || 'unknown');
 
       function renderCaseList(activeId) {
         caseListEl.innerHTML = '';
         results.forEach((result) => {
           const row = document.createElement('div');
-          row.className = `case ${result.id === activeId ? 'active' : ''}`;
-          row.textContent = `${result.id} (${result.verdict ?? 'unknown'})`;
+          row.className = 'case ' + (result.id === activeId ? 'active' : '');
+          row.textContent = result.id + ' (' + (result.verdict ?? 'unknown') + ')';
           const sub = document.createElement('span');
-          sub.textContent = `Score: ${result.score ?? 0}`;
+          sub.textContent = 'Score: ' + (result.score ?? 0);
           row.appendChild(sub);
           row.addEventListener('click', () => renderCaseDetails(result.id));
           caseListEl.appendChild(row);
@@ -611,29 +687,65 @@ function buildTrajectoryViewerHtml(data: Record<string, unknown>): string {
 
       function renderMetrics(metrics) {
         if (!metrics) return '<p>No metrics available.</p>';
-        const fmt = (m) => `Duration: ${m.durationMs}ms • Tokens: ${(m.tokenUsage && (m.tokenUsage.totalTokens ?? 'n/a')) || 'n/a'} • Tool calls: ${m.toolCalls?.count ?? 0}`;
-        return `
-          <div>
-            <div class="pill">Without Instructions</div><span>${fmt(metrics.withoutInstructions)}</span><br />
-            <div class="pill">With Instructions</div><span>${fmt(metrics.withInstructions)}</span><br />
-            <div class="pill">Judge</div><span>${fmt(metrics.judge)}</span><br />
-            <div class="pill">Total</div><span>${metrics.totalDurationMs}ms</span>
-          </div>
-        `;
+        const fmt = (m) => {
+          const usage = m.tokenUsage;
+          const prompt = usage?.promptTokens ?? 'n/a';
+          const completion = usage?.completionTokens ?? 'n/a';
+          const total = usage?.totalTokens ?? (usage ? (Number(usage.promptTokens ?? 0) + Number(usage.completionTokens ?? 0)) : 'n/a');
+          return (
+            'Duration: ' +
+            m.durationMs +
+            'ms • Tokens: ' +
+            prompt +
+            ' / ' +
+            completion +
+            ' / ' +
+            total +
+            ' • Tool calls: ' +
+            (m.toolCalls?.count ?? 0)
+          );
+        };
+        return (
+          '<div>' +
+          '<div class="pill">Without Instructions</div><span>' +
+          fmt(metrics.withoutInstructions) +
+          '</span><br />' +
+          '<div class="pill">With Instructions</div><span>' +
+          fmt(metrics.withInstructions) +
+          '</span><br />' +
+          '<div class="pill">Judge</div><span>' +
+          fmt(metrics.judge) +
+          '</span><br />' +
+          '<div class="pill">Total</div><span>' +
+          metrics.totalDurationMs +
+          'ms</span>' +
+          '</div>'
+        );
       }
 
       function renderTrajectory(events) {
         if (!events || !events.length) return '<p>No trajectory events captured.</p>';
-        return `
-          <div class="trajectory">
-            ${events.map((event) => `
-              <div class="event">
-                <div><strong>${event.type}</strong> <span class="pill">${event.phase}</span> <span>${new Date(event.timestampMs).toISOString()}</span></div>
-                <pre>${JSON.stringify(event.data ?? {}, null, 2)}</pre>
-              </div>
-            `).join('')}
-          </div>
-        `;
+        return (
+          '<div class="trajectory">' +
+          events
+            .map(
+              (event) =>
+                '<div class="event">' +
+                '<div><strong>' +
+                event.type +
+                '</strong> <span class="pill">' +
+                event.phase +
+                '</span> <span>' +
+                new Date(event.timestampMs).toISOString() +
+                '</span></div>' +
+                '<pre>' +
+                JSON.stringify(event.data ?? {}, null, 2) +
+                '</pre>' +
+                '</div>'
+            )
+            .join('') +
+          '</div>'
+        );
       }
 
       function renderCaseDetails(caseId) {
@@ -643,16 +755,25 @@ function buildTrajectoryViewerHtml(data: Record<string, unknown>): string {
           return;
         }
         renderCaseList(result.id);
-        caseDetailsEl.innerHTML = `
-          <h2>${escapeHtml(result.id)}</h2>
-          <p><strong>Verdict:</strong> ${escapeHtml(result.verdict ?? 'unknown')} (score: ${escapeHtml(result.score ?? 0)})</p>
-          <p><strong>Prompt:</strong> ${escapeHtml(result.prompt ?? '')}</p>
-          <p><strong>Expectation:</strong> ${escapeHtml(result.expectation ?? '')}</p>
-          <h3>Metrics</h3>
-          ${renderMetrics(result.metrics)}
-          <h3>Trajectory</h3>
-          ${renderTrajectory(result.trajectory)}
-        `;
+        caseDetailsEl.innerHTML =
+          '<h2>' +
+          escapeHtml(result.id) +
+          '</h2>' +
+          '<p><strong>Verdict:</strong> ' +
+          escapeHtml(result.verdict ?? 'unknown') +
+          ' (score: ' +
+          escapeHtml(result.score ?? 0) +
+          ')</p>' +
+          '<p><strong>Prompt:</strong> ' +
+          escapeHtml(result.prompt ?? '') +
+          '</p>' +
+          '<p><strong>Expectation:</strong> ' +
+          escapeHtml(result.expectation ?? '') +
+          '</p>' +
+          '<h3>Metrics</h3>' +
+          renderMetrics(result.metrics) +
+          '<h3>Trajectory</h3>' +
+          renderTrajectory(result.trajectory);
       }
 
       renderCaseDetails(results[0]?.id);
