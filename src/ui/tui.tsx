@@ -12,6 +12,7 @@ import { BatchTuiAzure } from "./BatchTuiAzure";
 import { getGitHubToken } from "../services/github";
 import { getAzureDevOpsToken } from "../services/azureDevops";
 import { safeWriteFile } from "../utils/fs";
+import { analyzeRepo, RepoApp } from "../services/analyzer";
 
 type Props = {
   repoPath: string;
@@ -31,6 +32,9 @@ type Status =
   | "batch-github"
   | "batch-azure"
   | "eval-pick"
+  | "model-pick"
+  | "generate-pick"
+  | "generate-app-pick"
   | "bootstrapEvalCount"
   | "bootstrapEvalConfirm";
 
@@ -86,6 +90,15 @@ function Divider({ label }: { label?: string }): React.JSX.Element {
   );
 }
 
+const PREFERRED_MODELS = ["claude-sonnet-4.5", "claude-sonnet-4", "gpt-4.1", "gpt-5"];
+
+function pickBestModel(available: string[], fallback: string): string {
+  for (const preferred of PREFERRED_MODELS) {
+    if (available.includes(preferred)) return preferred;
+  }
+  return available[0] || fallback;
+}
+
 export function PrimerTui({ repoPath, skipAnimation = false }: Props): React.JSX.Element {
   const app = useApp();
   const [status, setStatus] = useState<Status>(skipAnimation ? "idle" : "intro");
@@ -98,13 +111,20 @@ export function PrimerTui({ repoPath, skipAnimation = false }: Props): React.JSX
   const [evalCaseCountInput, setEvalCaseCountInput] = useState<string>("");
   const [evalBootstrapCount, setEvalBootstrapCount] = useState<number | null>(null);
   const [availableModels, setAvailableModels] = useState<string[]>([]);
-  const [evalModel, setEvalModel] = useState<string>("gpt-4.1");
-  const [judgeModel, setJudgeModel] = useState<string>("gpt-4.1");
+  const [evalModel, setEvalModel] = useState<string>("claude-sonnet-4.5");
+  const [judgeModel, setJudgeModel] = useState<string>("claude-sonnet-4.5");
+  const [modelPickTarget, setModelPickTarget] = useState<"eval" | "judge">("eval");
+  const [modelCursor, setModelCursor] = useState(0);
   const [hasEvalConfig, setHasEvalConfig] = useState<boolean | null>(null);
   const [activityLog, setActivityLog] = useState<LogEntry[]>([]);
+  const [generateTarget, setGenerateTarget] = useState<"copilot-instructions" | "agents-md">("copilot-instructions");
+  const [generateSavePath, setGenerateSavePath] = useState<string>("");
+  const [repoApps, setRepoApps] = useState<RepoApp[]>([]);
+  const [isMonorepo, setIsMonorepo] = useState(false);
   const repoLabel = useMemo(() => path.basename(repoPath), [repoPath]);
   const repoFull = useMemo(() => repoPath, [repoPath]);
   const isLoading = status === "generating" || status === "bootstrapping" || status === "evaluating";
+  const isMenu = status === "model-pick" || status === "eval-pick" || status === "batch-pick" || status === "generate-pick" || status === "generate-app-pick";
   const spinner = useSpinner(isLoading);
 
   const addLog = (text: string, type: LogEntry["type"] = "info") => {
@@ -115,17 +135,15 @@ export function PrimerTui({ repoPath, skipAnimation = false }: Props): React.JSX
     setStatus("idle");
   };
 
-  const cycleModel = (current: string): string => {
-    if (!availableModels.length) return current;
-    const index = availableModels.indexOf(current);
-    const nextIndex = index === -1 ? 0 : (index + 1) % availableModels.length;
-    return availableModels[nextIndex];
-  };
-
-  // Check for eval config on mount
+  // Check for eval config and repo structure on mount
   useEffect(() => {
     const configPath = path.join(repoPath, "primer.eval.json");
     fs.access(configPath).then(() => setHasEvalConfig(true)).catch(() => setHasEvalConfig(false));
+    analyzeRepo(repoPath).then((analysis) => {
+      const apps = analysis.apps ?? [];
+      setRepoApps(apps);
+      setIsMonorepo(analysis.isMonorepo ?? false);
+    }).catch(() => {});
   }, [repoPath]);
 
   useEffect(() => {
@@ -135,8 +153,8 @@ export function PrimerTui({ repoPath, skipAnimation = false }: Props): React.JSX
         if (!active) return;
         setAvailableModels(models);
         if (models.length === 0) return;
-        setEvalModel((current) => (models.includes(current) ? current : models[0]));
-        setJudgeModel((current) => (models.includes(current) ? current : models[0]));
+        setEvalModel((current) => (models.includes(current) ? current : pickBestModel(models, current)));
+        setJudgeModel((current) => (models.includes(current) ? current : pickBestModel(models, current)));
       })
       .catch(() => {
         if (!active) return;
@@ -146,6 +164,35 @@ export function PrimerTui({ repoPath, skipAnimation = false }: Props): React.JSX
       active = false;
     };
   }, []);
+
+  const doGenerate = async (targetRepoPath: string, savePath: string, target: string): Promise<void> => {
+    setStatus("generating");
+    setMessage(`Generating ${target}...`);
+    addLog(`Generating ${target}...`, "progress");
+    try {
+      const content = await generateCopilotInstructions({
+        repoPath: targetRepoPath,
+        onProgress: (msg) => setMessage(msg)
+      });
+      if (!content.trim()) {
+        throw new Error("Copilot SDK returned empty content.");
+      }
+      setGeneratedContent(content);
+      setGenerateSavePath(savePath);
+      setStatus("preview");
+      setMessage("Review the generated content below.");
+      addLog(`${target} generated — review and save.`, "success");
+    } catch (error) {
+      setStatus("error");
+      const msg = error instanceof Error ? error.message : "Generation failed.";
+      if (msg.toLowerCase().includes("auth") || msg.toLowerCase().includes("login")) {
+        setMessage(`${msg} Run 'copilot' then '/login' in a separate terminal.`);
+      } else {
+        setMessage(msg);
+      }
+      addLog(msg, "error");
+    }
+  };
 
   const bootstrapEvalConfig = async (count: number, force: boolean): Promise<void> => {
     const configPath = path.join(repoPath, "primer.eval.json");
@@ -187,11 +234,12 @@ export function PrimerTui({ repoPath, skipAnimation = false }: Props): React.JSX
       if (status === "preview") {
         if (input.toLowerCase() === "s") {
           try {
-            const outputPath = path.join(repoPath, ".github", "copilot-instructions.md");
+            const outputPath = generateSavePath || path.join(repoPath, ".github", "copilot-instructions.md");
             await fs.mkdir(path.dirname(outputPath), { recursive: true });
             await fs.writeFile(outputPath, generatedContent, "utf8");
             setStatus("done");
-            const msg = "Saved to .github/copilot-instructions.md";
+            const relPath = path.relative(repoPath, outputPath);
+            const msg = `Saved to ${relPath}`;
             setMessage(msg);
             addLog(msg, "success");
             setGeneratedContent("");
@@ -264,6 +312,130 @@ export function PrimerTui({ repoPath, skipAnimation = false }: Props): React.JSX
           setMessage("Bootstrap cancelled.");
           setEvalCaseCountInput("");
           setEvalBootstrapCount(null);
+        }
+        return;
+      }
+
+      if (status === "generate-pick") {
+        if (input.toLowerCase() === "c") {
+          setGenerateTarget("copilot-instructions");
+          if (isMonorepo && repoApps.length > 1) {
+            setStatus("generate-app-pick");
+            setMessage("Generate for root or per-app?");
+          } else {
+            const savePath = path.join(repoPath, ".github", "copilot-instructions.md");
+            setGenerateSavePath(savePath);
+            await doGenerate(repoPath, savePath, "copilot-instructions");
+          }
+          return;
+        }
+        if (input.toLowerCase() === "a") {
+          setGenerateTarget("agents-md");
+          if (isMonorepo && repoApps.length > 1) {
+            setStatus("generate-app-pick");
+            setMessage("Generate for root or per-app?");
+          } else {
+            const savePath = path.join(repoPath, "AGENTS.md");
+            setGenerateSavePath(savePath);
+            await doGenerate(repoPath, savePath, "agents-md");
+          }
+          return;
+        }
+        if (key.escape) {
+          setStatus("idle");
+          setMessage("");
+          return;
+        }
+        return;
+      }
+
+      if (status === "generate-app-pick") {
+        if (input.toLowerCase() === "r") {
+          // Root only
+          const savePath = generateTarget === "copilot-instructions"
+            ? path.join(repoPath, ".github", "copilot-instructions.md")
+            : path.join(repoPath, "AGENTS.md");
+          setGenerateSavePath(savePath);
+          await doGenerate(repoPath, savePath, generateTarget);
+          return;
+        }
+        if (input.toLowerCase() === "a") {
+          // All apps sequentially
+          setStatus("generating");
+          addLog(`Generating ${generateTarget} for ${repoApps.length} apps...`, "progress");
+          let count = 0;
+          for (const app of repoApps) {
+            const savePath = generateTarget === "copilot-instructions"
+              ? path.join(app.path, ".github", "copilot-instructions.md")
+              : path.join(app.path, "AGENTS.md");
+            setMessage(`Generating for ${app.name} (${count + 1}/${repoApps.length})...`);
+            try {
+              const content = await generateCopilotInstructions({
+                repoPath: app.path,
+                onProgress: (msg) => setMessage(`${app.name}: ${msg}`)
+              });
+              if (content.trim()) {
+                await fs.mkdir(path.dirname(savePath), { recursive: true });
+                await fs.writeFile(savePath, content, "utf8");
+                count++;
+                addLog(`${app.name}: saved ${path.basename(savePath)}`, "success");
+              }
+            } catch (error) {
+              const msg = error instanceof Error ? error.message : "Failed.";
+              addLog(`${app.name}: ${msg}`, "error");
+            }
+          }
+          setStatus("done");
+          setMessage(`Generated ${generateTarget} for ${count}/${repoApps.length} apps.`);
+          return;
+        }
+        // Number to pick a specific app
+        const num = Number.parseInt(input, 10);
+        if (Number.isFinite(num) && num >= 1 && num <= repoApps.length) {
+          const app = repoApps[num - 1];
+          const savePath = generateTarget === "copilot-instructions"
+            ? path.join(app.path, ".github", "copilot-instructions.md")
+            : path.join(app.path, "AGENTS.md");
+          setGenerateSavePath(savePath);
+          await doGenerate(app.path, savePath, generateTarget);
+          return;
+        }
+        if (key.escape) {
+          setStatus("generate-pick");
+          setMessage("Select what to generate.");
+          return;
+        }
+        return;
+      }
+
+      if (status === "model-pick") {
+        if (key.escape) {
+          setStatus("idle");
+          setMessage("");
+          return;
+        }
+        if (key.upArrow) {
+          setModelCursor((prev) => Math.max(0, prev - 1));
+          return;
+        }
+        if (key.downArrow) {
+          setModelCursor((prev) => Math.min(availableModels.length - 1, prev + 1));
+          return;
+        }
+        if (key.return) {
+          const chosen = availableModels[modelCursor];
+          if (chosen) {
+            if (modelPickTarget === "eval") {
+              setEvalModel(chosen);
+              addLog(`Eval model → ${chosen}`, "success");
+            } else {
+              setJudgeModel(chosen);
+              addLog(`Judge model → ${chosen}`, "success");
+            }
+            setStatus("idle");
+            setMessage(`${modelPickTarget === "eval" ? "Eval" : "Judge"} model set to ${chosen}`);
+          }
+          return;
         }
         return;
       }
@@ -369,31 +541,9 @@ export function PrimerTui({ repoPath, skipAnimation = false }: Props): React.JSX
       }
 
       if (input.toLowerCase() === "g") {
-        setStatus("generating");
-        setMessage("Starting generation...");
-        addLog("Generating copilot instructions...", "progress");
-        try {
-          const content = await generateCopilotInstructions({
-            repoPath,
-            onProgress: (msg) => setMessage(msg)
-          });
-          if (!content.trim()) {
-            throw new Error("Copilot SDK returned empty instructions.");
-          }
-          setGeneratedContent(content);
-          setStatus("preview");
-          setMessage("Review the generated instructions below.");
-          addLog("Instructions generated — review and save.", "success");
-        } catch (error) {
-          setStatus("error");
-          const msg = error instanceof Error ? error.message : "Generation failed.";
-          if (msg.toLowerCase().includes("auth") || msg.toLowerCase().includes("login")) {
-            setMessage(`${msg} Run 'copilot' then '/login' in a separate terminal.`);
-          } else {
-            setMessage(msg);
-          }
-          addLog(msg, "error");
-        }
+        setStatus("generate-pick");
+        setMessage("Select what to generate.");
+        return;
       }
 
       if (input.toLowerCase() === "b") {
@@ -413,9 +563,12 @@ export function PrimerTui({ repoPath, skipAnimation = false }: Props): React.JSX
           setMessage("No Copilot CLI models detected; using defaults.");
           return;
         }
-        const next = cycleModel(evalModel);
-        setEvalModel(next);
-        setMessage(`Eval model → ${next}`);
+        setModelPickTarget("eval");
+        setStatus("model-pick");
+        setMessage("Pick eval model.");
+        // Set cursor to current model
+        const idx = availableModels.indexOf(evalModel);
+        setModelCursor(idx >= 0 ? idx : 0);
         return;
       }
 
@@ -424,16 +577,18 @@ export function PrimerTui({ repoPath, skipAnimation = false }: Props): React.JSX
           setMessage("No Copilot CLI models detected; using defaults.");
           return;
         }
-        const next = cycleModel(judgeModel);
-        setJudgeModel(next);
-        setMessage(`Judge model → ${next}`);
+        setModelPickTarget("judge");
+        setStatus("model-pick");
+        setMessage("Pick judge model.");
+        const idx = availableModels.indexOf(judgeModel);
+        setModelCursor(idx >= 0 ? idx : 0);
         return;
       }
   });
 
   const statusIcon = status === "error" ? "✗" : status === "done" ? "✓" : isLoading ? spinner : "●";
-  const statusLabel = status === "intro" ? "starting" : status === "idle" ? "ready" : status === "bootstrapEvalCount" ? "input" : status === "bootstrapEvalConfirm" ? "confirm" : status === "eval-pick" ? "eval" : status === "batch-pick" ? "batch" : status;
-  const statusColor = status === "error" ? "red" : status === "done" ? "green" : isLoading ? "yellow" : "cyanBright";
+  const statusLabel = status === "intro" ? "starting" : status === "idle" ? "ready" : status === "bootstrapEvalCount" ? "input" : status === "bootstrapEvalConfirm" ? "confirm" : status === "eval-pick" ? "eval" : status === "batch-pick" ? "batch" : status === "model-pick" ? "models" : status;
+  const statusColor = status === "error" ? "red" : status === "done" ? "green" : isLoading ? "yellow" : isMenu ? "magentaBright" : "cyanBright";
 
   const formatTokens = (result: EvalResult): string => {
     const withUsage = result.metrics?.withInstructions?.tokenUsage;
@@ -475,6 +630,7 @@ export function PrimerTui({ repoPath, skipAnimation = false }: Props): React.JSX
         <Text>
           <Text color="gray">Repo  </Text>
           <Text color="white" bold>{repoLabel}</Text>
+          {isMonorepo && <Text color="magentaBright"> monorepo · {repoApps.length} apps</Text>}
           <Text color="gray" dimColor>  {repoFull}</Text>
         </Text>
         <Text>
@@ -520,6 +676,47 @@ export function PrimerTui({ repoPath, skipAnimation = false }: Props): React.JSX
         )}
       </Box>
 
+      {/* Model Picker */}
+      {status === "model-pick" && availableModels.length > 0 && (
+        <>
+          <Divider label={`Pick ${modelPickTarget} model`} />
+          <Box flexDirection="column" paddingLeft={1}>
+            {availableModels.map((model, i) => {
+              const current = modelPickTarget === "eval" ? evalModel : judgeModel;
+              const isCurrent = model === current;
+              const isCursor = i === modelCursor;
+              return (
+                <Text key={model}>
+                  <Text color={isCursor ? "cyan" : undefined}>{isCursor ? "\u276F " : "  "}</Text>
+                  <Text color={isCurrent ? "green" : isCursor ? "cyanBright" : "white"} bold={isCursor}>{model}</Text>
+                  {isCurrent && <Text color="green" dimColor> (current)</Text>}
+                </Text>
+              );
+            })}
+            {availableModels.length > 15 && (
+              <Text color="gray" dimColor>Use {"\u2191\u2193"} to scroll</Text>
+            )}
+          </Box>
+        </>
+      )}
+
+      {/* App picker for monorepo generate */}
+      {status === "generate-app-pick" && repoApps.length > 0 && (
+        <>
+          <Divider label={`Generate ${generateTarget}`} />
+          <Box flexDirection="column" paddingLeft={1}>
+            {repoApps.map((app, i) => (
+              <Text key={app.name}>
+                <Text color="cyanBright" bold>{i + 1}</Text>
+                <Text color="gray"> </Text>
+                <Text color="white">{app.name}</Text>
+                <Text color="gray" dimColor>  {path.relative(repoPath, app.path)}</Text>
+              </Text>
+            ))}
+          </Box>
+        </>
+      )}
+
       {/* Input: eval case count */}
       {status === "bootstrapEvalCount" && (
         <Box marginTop={1} paddingLeft={1}>
@@ -531,7 +728,7 @@ export function PrimerTui({ repoPath, skipAnimation = false }: Props): React.JSX
       {/* Preview */}
       {status === "preview" && generatedContent && (
         <Box flexDirection="column" marginTop={1} borderStyle="single" borderColor="gray" paddingX={1}>
-          <Text color="cyan" bold>Preview (.github/copilot-instructions.md)</Text>
+          <Text color="cyan" bold>Preview ({path.relative(repoPath, generateSavePath) || generateTarget})</Text>
           <Text color="gray">{truncatedPreview}</Text>
         </Box>
       )}
@@ -573,6 +770,32 @@ export function PrimerTui({ repoPath, skipAnimation = false }: Props): React.JSX
             <KeyHint k="Y" label="Overwrite" />
             <KeyHint k="N" label="Cancel" />
             <KeyHint k="Q" label="Quit" />
+          </Box>
+        ) : status === "model-pick" ? (
+          <Box>
+            <Text color="cyan">Use </Text>
+            <Text color="cyanBright" bold>{"\u2191\u2193"}</Text>
+            <Text color="cyan"> to navigate, </Text>
+            <Text color="cyanBright" bold>Enter</Text>
+            <Text color="cyan"> to select  </Text>
+            <KeyHint k="Esc" label="Back" />
+          </Box>
+        ) : status === "generate-pick" ? (
+          <Box>
+            <KeyHint k="C" label="Copilot instructions" />
+            <KeyHint k="A" label="AGENTS.md" />
+            <KeyHint k="Esc" label="Back" />
+          </Box>
+        ) : status === "generate-app-pick" ? (
+          <Box>
+            <KeyHint k="R" label="Root only" />
+            <KeyHint k="A" label="All apps" />
+            <Text color="gray" dimColor>  or press </Text>
+            <Text color="cyanBright" bold>1</Text>
+            <Text color="gray" dimColor>-</Text>
+            <Text color="cyanBright" bold>{repoApps.length}</Text>
+            <Text color="gray" dimColor>  </Text>
+            <KeyHint k="Esc" label="Back" />
           </Box>
         ) : status === "eval-pick" ? (
           <Box>

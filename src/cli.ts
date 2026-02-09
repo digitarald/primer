@@ -29,9 +29,10 @@ export function runCli(argv: string[]): void {
 
   program
     .command("generate")
-    .argument("<type>", "prompts|agents|mcp|vscode|aiignore")
+    .argument("<type>", "instructions|agents|mcp|vscode")
     .argument("[path]", "Path to a local repository")
     .option("--force", "Overwrite existing files")
+    .option("--per-app", "Generate per-app in monorepos")
     .action(generateCommand);
 
   program
@@ -45,8 +46,8 @@ export function runCli(argv: string[]): void {
     .command("eval")
     .argument("[path]", "Path to eval config JSON")
     .option("--repo <path>", "Repository path", process.cwd())
-    .option("--model <name>", "Model for responses", "gpt-5")
-    .option("--judge-model <name>", "Model for judging", "gpt-5")
+    .option("--model <name>", "Model for responses", "claude-sonnet-4.5")
+    .option("--judge-model <name>", "Model for judging", "claude-sonnet-4.5")
     .option("--list-models", "List Copilot CLI models and exit")
     .option("--output <path>", "Write results JSON to file")
     .option("--init", "Create a starter primer.eval.json file")
@@ -63,7 +64,7 @@ export function runCli(argv: string[]): void {
     .command("instructions")
     .option("--repo <path>", "Repository path", process.cwd())
     .option("--output <path>", "Output path for copilot instructions")
-    .option("--model <name>", "Model for instructions generation", "gpt-4.1")
+    .option("--model <name>", "Model for instructions generation", "claude-sonnet-4.5")
     .action(instructionsCommand);
 
   program
