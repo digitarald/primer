@@ -1,4 +1,5 @@
 import fs from "fs/promises";
+import path from "path";
 import fg from "fast-glob";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -90,9 +91,10 @@ async function findCopilotCliPath(): Promise<string> {
   for (const pattern of globPatterns) {
     const matches = await fg(pattern, { onlyFiles: true });
     if (matches.length > 0) {
-      cachedCliPath = matches[0];
+      const normalized = path.normalize(matches[0]);
+      cachedCliPath = normalized;
       cachedCliPathTimestamp = Date.now();
-      return matches[0];
+      return normalized;
     }
   }
 

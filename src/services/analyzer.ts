@@ -221,7 +221,7 @@ async function resolveWorkspaceApps(
     .map((pattern) => (pattern.endsWith("package.json") ? pattern : path.posix.join(pattern, "package.json")));
 
   const packageJsonPaths = workspacePatterns.length
-    ? await fg(workspacePatterns, { cwd: repoPath, absolute: true, onlyFiles: true, dot: false })
+    ? (await fg(workspacePatterns, { cwd: repoPath, absolute: true, onlyFiles: true, dot: false })).map(p => path.normalize(p))
     : [];
 
   if (!packageJsonPaths.length && rootPackageJson) {
@@ -317,10 +317,10 @@ async function detectCargoWorkspace(repoPath: string): Promise<RepoApp[]> {
   const patterns = [...membersMatch[1].matchAll(/"([^"]+)"/gu)].map(m => m[1]);
   if (!patterns.length) return [];
 
-  const tomlPaths = await fg(
+  const tomlPaths = (await fg(
     patterns.map(p => path.posix.join(p, "Cargo.toml")),
     { cwd: repoPath, absolute: true, onlyFiles: true }
-  );
+  )).map(p => path.normalize(p));
 
   return Promise.all(tomlPaths.map(async (tomlPath) => {
     const dir = path.dirname(tomlPath);
