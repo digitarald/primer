@@ -24,13 +24,13 @@ npx github:pierceboggan/primer readiness --visual
 
 ## Prerequisites
 
-| Requirement | Notes |
-|---|---|
-| **Node.js 20+** | Runtime |
-| **GitHub Copilot CLI** | Bundled with the VS Code Copilot Chat extension |
-| **Copilot authentication** | Run `copilot` → `/login` |
-| **GitHub CLI** _(optional)_ | For batch processing and PR creation: `brew install gh && gh auth login` |
-| **Azure DevOps PAT** _(optional)_ | Set `AZURE_DEVOPS_PAT` for Azure DevOps workflows |
+| Requirement                       | Notes                                                                    |
+| --------------------------------- | ------------------------------------------------------------------------ |
+| **Node.js 20+**                   | Runtime                                                                  |
+| **GitHub Copilot CLI**            | Bundled with the VS Code Copilot Chat extension                          |
+| **Copilot authentication**        | Run `copilot` → `/login`                                                 |
+| **GitHub CLI** _(optional)_       | For batch processing and PR creation: `brew install gh && gh auth login` |
+| **Azure DevOps PAT** _(optional)_ | Set `AZURE_DEVOPS_PAT` for Azure DevOps workflows                        |
 
 ## Installation
 
@@ -73,13 +73,13 @@ primer readiness /path/to/repo --output report.html
 
 **Maturity levels:**
 
-| Level | Name | Description |
-|---|---|---|
-| 1 | Functional | Builds, tests, basic tooling in place |
-| 2 | Documented | README, CONTRIBUTING, custom AI instructions exist |
-| 3 | Standardized | CI/CD, security policies, CODEOWNERS, observability |
-| 4 | Optimized | MCP servers, custom agents, AI skills configured |
-| 5 | Autonomous | Full AI-native development with minimal oversight |
+| Level | Name         | Description                                         |
+| ----- | ------------ | --------------------------------------------------- |
+| 1     | Functional   | Builds, tests, basic tooling in place               |
+| 2     | Documented   | README, CONTRIBUTING, custom AI instructions exist  |
+| 3     | Standardized | CI/CD, security policies, CODEOWNERS, observability |
+| 4     | Optimized    | MCP servers, custom agents, AI skills configured    |
+| 5     | Autonomous   | Full AI-native development with minimal oversight   |
 
 **AI Tooling checks** include `copilot-instructions.md`, `CLAUDE.md`, `AGENTS.md`, `.cursorrules`, MCP configs, custom agents, and Copilot/Claude skills.
 
@@ -150,13 +150,13 @@ primer tui
 primer tui --repo /path/to/repo --no-animation
 ```
 
-| Key | Action |
-|---|---|
-| `G` | Generate instructions or AGENTS.md |
-| `E` | Run evals or init eval config |
-| `B` | Batch — GitHub or Azure DevOps |
-| `M` / `J` | Pick eval / judge model |
-| `Q` | Quit |
+| Key       | Action                             |
+| --------- | ---------------------------------- |
+| `G`       | Generate instructions or AGENTS.md |
+| `E`       | Run evals or init eval config      |
+| `B`       | Batch — GitHub or Azure DevOps     |
+| `M` / `J` | Pick eval / judge model            |
+| `Q`       | Quit                               |
 
 ## Development
 
