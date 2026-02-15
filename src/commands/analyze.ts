@@ -1,5 +1,7 @@
 import path from "path";
 import { analyzeRepo } from "../services/analyzer";
+import { outputResult, type CommandResult } from "../utils/output";
+import { prettyPrintSummary } from "../utils/logger";
 
 type AnalyzeOptions = {
   json?: boolean;
@@ -10,14 +12,14 @@ export async function analyzeCommand(repoPathArg: string | undefined, options: A
   const analysis = await analyzeRepo(repoPath);
 
   if (options.json) {
-    console.log(JSON.stringify(analysis, null, 2));
+    const result: CommandResult<typeof analysis> = {
+      ok: true,
+      status: "success",
+      data: analysis,
+    };
+    outputResult(result, true);
     return;
   }
 
-  console.log("Repository analysis:");
-  console.log(`- Path: ${analysis.path}`);
-  console.log(`- Git: ${analysis.isGitRepo ? "yes" : "no"}`);
-  console.log(`- Languages: ${analysis.languages.join(", ") || "unknown"}`);
-  console.log(`- Frameworks: ${analysis.frameworks.join(", ") || "none"}`);
-  console.log(`- Package manager: ${analysis.packageManager ?? "unknown"}`);
+  prettyPrintSummary(analysis);
 }

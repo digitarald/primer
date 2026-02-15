@@ -1,19 +1,15 @@
 import React, { useEffect, useState } from "react";
 import { Box, Text, useApp, useInput } from "ink";
-import path from "path";
 import fs from "fs/promises";
 import {
   GitHubOrg,
   GitHubRepo,
   listUserOrgs,
   listOrgRepos,
-  createPullRequest,
   listAccessibleRepos,
   checkReposForInstructions
 } from "../services/github";
-import { cloneRepo, checkoutBranch, commitAll, pushBranch, isGitRepo, CloneOptions } from "../services/git";
-import { generateCopilotInstructions } from "../services/instructions";
-import { ensureDir } from "../utils/fs";
+import { processRepo, type ProcessResult } from "../services/batch";
 import { StaticBanner } from "./AnimatedBanner";
 
 type Props = {
@@ -31,13 +27,6 @@ type Status =
   | "complete"
   | "error";
 
-type ProcessResult = {
-  repo: string;
-  success: boolean;
-  prUrl?: string;
-  error?: string;
-};
-
 export function BatchTui({ token, outputPath }: Props): React.JSX.Element {
   const app = useApp();
   const [status, setStatus] = useState<Status>("loading-orgs");
@@ -53,7 +42,6 @@ export function BatchTui({ token, outputPath }: Props): React.JSX.Element {
 
   // Processing
   const [results, setResults] = useState<ProcessResult[]>([]);
-  const [currentRepoIndex, setCurrentRepoIndex] = useState(0);
   const [processingMessage, setProcessingMessage] = useState("");
 
   // Load orgs on mount
@@ -143,96 +131,31 @@ export function BatchTui({ token, outputPath }: Props): React.JSX.Element {
   async function processRepos() {
     const selectedRepos = Array.from(selectedRepoIndices).map(i => repos[i]);
     setStatus("processing");
-    setCurrentRepoIndex(0);
     setResults([]);
 
+    const allResults: ProcessResult[] = [];
     for (let i = 0; i < selectedRepos.length; i++) {
       const repo = selectedRepos[i];
-      setCurrentRepoIndex(i);
-      setProcessingMessage(`[${i + 1}/${selectedRepos.length}] ${repo.fullName}: Cloning...`);
+      setProcessingMessage(`[${i + 1}/${selectedRepos.length}] ${repo.fullName}: Processing...`);
 
-      try {
-        // Clone
-        const cacheRoot = path.join(process.cwd(), ".primer-cache");
-        const repoPath = path.join(cacheRoot, repo.owner, repo.name);
-        await ensureDir(repoPath);
+      const result = await processRepo({
+        repo,
+        token,
+        progress: {
+          update: (msg) => setProcessingMessage(`[${i + 1}/${selectedRepos.length}] ${msg}`),
+          succeed: (msg) => setProcessingMessage(`[${i + 1}/${selectedRepos.length}] ✓ ${msg}`),
+          fail: (msg) => setProcessingMessage(`[${i + 1}/${selectedRepos.length}] ✗ ${msg}`),
+          done: () => {},
+        },
+      });
 
-        if (!(await isGitRepo(repoPath))) {
-          // Add auth to clone URL (strip trailing slashes first)
-          const cleanUrl = repo.cloneUrl.replace(/\/+$/, "");
-          const authedUrl = cleanUrl.replace("https://", `https://x-access-token:${token}@`);
-          await cloneRepo(authedUrl, repoPath, {
-            shallow: true,
-            timeoutMs: 120000, // 2 minute timeout for clone
-            onProgress: (stage, progress) => {
-              setProcessingMessage(`[${i + 1}/${selectedRepos.length}] ${repo.fullName}: Cloning (${stage} ${progress}%)...`);
-            }
-          });
-        }
-
-        // Branch
-        setProcessingMessage(`[${i + 1}/${selectedRepos.length}] ${repo.fullName}: Creating branch...`);
-        const branch = "primer/add-instructions";
-        await checkoutBranch(repoPath, branch);
-
-        // Generate instructions with timeout
-        setProcessingMessage(`[${i + 1}/${selectedRepos.length}] ${repo.fullName}: Generating instructions...`);
-        
-        const timeoutMs = 120000; // 2 minute timeout per repo
-        const instructionsPromise = generateCopilotInstructions({
-          repoPath,
-          model: "gpt-4.1",
-          onProgress: (msg) => {
-            setProcessingMessage(`[${i + 1}/${selectedRepos.length}] ${repo.fullName}: ${msg}`);
-          }
-        });
-        
-        const timeoutPromise = new Promise<string>((_, reject) => {
-          setTimeout(() => reject(new Error("Generation timed out after 2 minutes")), timeoutMs);
-        });
-        
-        const instructions = await Promise.race([instructionsPromise, timeoutPromise]);
-
-        if (!instructions.trim()) {
-          throw new Error("Generated instructions were empty");
-        }
-
-        // Write instructions
-        const instructionsPath = path.join(repoPath, ".github", "copilot-instructions.md");
-        await fs.mkdir(path.dirname(instructionsPath), { recursive: true });
-        await fs.writeFile(instructionsPath, instructions, "utf8");
-
-        // Commit
-        setProcessingMessage(`[${i + 1}/${selectedRepos.length}] ${repo.fullName}: Committing...`);
-        await commitAll(repoPath, "chore: add copilot instructions via Primer");
-
-        // Push
-        setProcessingMessage(`[${i + 1}/${selectedRepos.length}] ${repo.fullName}: Pushing...`);
-        await pushBranch(repoPath, branch, token);
-
-        // Create PR
-        setProcessingMessage(`[${i + 1}/${selectedRepos.length}] ${repo.fullName}: Creating PR...`);
-        const prUrl = await createPullRequest({
-          token,
-          owner: repo.owner,
-          repo: repo.name,
-          title: "🤖 Add Copilot instructions via Primer",
-          body: buildPrBody(),
-          head: branch,
-          base: repo.defaultBranch
-        });
-
-        setResults(prev => [...prev, { repo: repo.fullName, success: true, prUrl }]);
-      } catch (error) {
-        const errorMsg = error instanceof Error ? error.message : "Unknown error";
-        setResults(prev => [...prev, { repo: repo.fullName, success: false, error: errorMsg }]);
-      }
+      allResults.push(result);
+      setResults(prev => [...prev, result]);
     }
 
     // Write results if output path specified
     if (outputPath) {
-      const finalResults = [...results];
-      await fs.writeFile(outputPath, JSON.stringify(finalResults, null, 2), "utf8");
+      await fs.writeFile(outputPath, JSON.stringify(allResults, null, 2), "utf8");
     }
 
     setStatus("complete");
@@ -437,30 +360,4 @@ export function BatchTui({ token, outputPath }: Props): React.JSX.Element {
       </Box>
     </Box>
   );
-}
-
-function buildPrBody(): string {
-  return [
-    "## 🤖 Copilot Instructions Added",
-    "",
-    "This PR adds a `.github/copilot-instructions.md` file to help GitHub Copilot understand this codebase better.",
-    "",
-    "### What's Included",
-    "",
-    "The instructions file contains:",
-    "- Project overview and architecture",
-    "- Tech stack and conventions",
-    "- Build/test commands",
-    "- Key directories and files",
-    "",
-    "### Benefits",
-    "",
-    "With these instructions, Copilot will:",
-    "- Generate more contextually-aware code suggestions",
-    "- Follow project-specific patterns and conventions",
-    "- Understand the codebase structure",
-    "",
-    "---",
-    "*Generated by [Primer](https://github.com/pierceboggan/primer) - Prime your repos for AI*"
-  ].join("\n");
 }

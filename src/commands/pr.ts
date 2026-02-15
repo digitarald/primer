@@ -4,45 +4,56 @@ import { generateConfigs } from "../services/generator";
 import { createPullRequest, getRepo } from "../services/github";
 import { checkoutBranch, cloneRepo, commitAll, isGitRepo, pushBranch } from "../services/git";
 import { ensureDir } from "../utils/fs";
+import { outputResult, outputError, createProgressReporter, type CommandResult } from "../utils/output";
 
 type PrOptions = {
   branch?: string;
+  json?: boolean;
+  quiet?: boolean;
 };
 
 export async function prCommand(repo: string | undefined, options: PrOptions): Promise<void> {
   if (!repo) {
-    console.error("Provide a repo in owner/name form.");
+    outputError("Provide a repo in owner/name form.", Boolean(options.json));
     process.exitCode = 1;
     return;
   }
 
   const token = process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN;
   if (!token) {
-    console.error("Set GITHUB_TOKEN or GH_TOKEN to use PR automation.");
+    outputError("Set GITHUB_TOKEN or GH_TOKEN to use PR automation.", Boolean(options.json));
     process.exitCode = 1;
     return;
   }
 
-  const [owner, name] = repo.split("/");
-  if (!owner || !name) {
-    console.error("Invalid repo format. Use owner/name.");
+  const repoMatch = repo.match(/^([a-zA-Z0-9._-]+)\/([a-zA-Z0-9._-]+)$/);
+  if (!repoMatch) {
+    outputError("Invalid repo format. Use owner/name.", Boolean(options.json));
     process.exitCode = 1;
     return;
   }
+  const [, owner, name] = repoMatch;
 
+  const progress = createProgressReporter(Boolean(options.json) || Boolean(options.quiet));
+
+  progress.update("Fetching repo info...");
   const repoInfo = await getRepo(token, owner, name);
   const cacheRoot = path.join(process.cwd(), ".primer-cache");
   const repoPath = path.join(cacheRoot, owner, name);
   await ensureDir(repoPath);
 
   if (!(await isGitRepo(repoPath))) {
+    progress.update("Cloning...");
     await cloneRepo(repoInfo.cloneUrl, repoPath);
   }
 
   const branch = options.branch ?? "primer/add-configs";
+  progress.update("Creating branch...");
   await checkoutBranch(repoPath, branch);
 
+  progress.update("Analyzing repo...");
   const analysis = await analyzeRepo(repoPath);
+  progress.update("Generating configs...");
   await generateConfigs({
     repoPath,
     analysis,
@@ -50,9 +61,12 @@ export async function prCommand(repo: string | undefined, options: PrOptions): P
     force: true
   });
 
+  progress.update("Committing...");
   await commitAll(repoPath, "chore: add AI configurations via Primer");
+  progress.update("Pushing...");
   await pushBranch(repoPath, branch);
 
+  progress.update("Creating PR...");
   const prUrl = await createPullRequest({
     token,
     owner,
@@ -63,7 +77,19 @@ export async function prCommand(repo: string | undefined, options: PrOptions): P
     base: repoInfo.defaultBranch
   });
 
-  console.log(`Created PR: ${prUrl}`);
+  progress.done();
+
+  if (options.json) {
+    const prNumber = parseInt(prUrl.split("/").pop() ?? "0", 10);
+    const result: CommandResult<{ repo: string; branch: string; prUrl: string; prNumber: number }> = {
+      ok: true,
+      status: "success",
+      data: { repo, branch, prUrl, prNumber },
+    };
+    outputResult(result, true);
+  } else {
+    console.log(`Created PR: ${prUrl}`);
+  }
 }
 
 function buildPrBody(): string {

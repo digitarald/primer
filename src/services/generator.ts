@@ -2,6 +2,11 @@ import path from "path";
 import { RepoAnalysis } from "./analyzer";
 import { ensureDir, safeWriteFile } from "../utils/fs";
 
+export type FileAction = {
+  path: string;
+  action: "wrote" | "skipped";
+};
+
 export type GenerateOptions = {
   repoPath: string;
   analysis: RepoAnalysis;
@@ -9,17 +14,24 @@ export type GenerateOptions = {
   force: boolean;
 };
 
-export async function generateConfigs(options: GenerateOptions): Promise<{ summary: string }>
+export type GenerateResult = {
+  files: FileAction[];
+};
+
+export async function generateConfigs(options: GenerateOptions): Promise<GenerateResult>
 {
   const { repoPath, analysis, selections, force } = options;
-  const actions: string[] = [];
+  const files: FileAction[] = [];
 
   if (selections.includes("mcp")) {
     const filePath = path.join(repoPath, ".vscode", "mcp.json");
     await ensureDir(path.dirname(filePath));
     const content = renderMcp();
     const result = await safeWriteFile(filePath, content, force);
-    actions.push(result);
+    files.push({
+      path: path.relative(process.cwd(), filePath),
+      action: result.startsWith("Skipped") ? "skipped" : "wrote",
+    });
   }
 
   if (selections.includes("vscode")) {
@@ -27,12 +39,13 @@ export async function generateConfigs(options: GenerateOptions): Promise<{ summa
     await ensureDir(path.dirname(filePath));
     const content = renderVscodeSettings(analysis);
     const result = await safeWriteFile(filePath, content, force);
-    actions.push(result);
+    files.push({
+      path: path.relative(process.cwd(), filePath),
+      action: result.startsWith("Skipped") ? "skipped" : "wrote",
+    });
   }
 
-
-  const summary = actions.length ? `\n${actions.join("\n")}` : "No changes made.";
-  return { summary };
+  return { files };
 }
 
 function renderMcp(): string {

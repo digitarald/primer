@@ -1,6 +1,7 @@
 import path from "path";
 import fs from "fs/promises";
 import { runEval } from "../services/evaluator";
+import { outputResult, outputError, type CommandResult } from "../utils/output";
 
 type EvalOptions = {
   repo?: string;
@@ -8,6 +9,7 @@ type EvalOptions = {
   judgeModel?: string;
   output?: string;
   init?: boolean;
+  json?: boolean;
 };
 
 const EVAL_SCAFFOLD = {
@@ -39,21 +41,30 @@ export async function evalCommand(configPathArg: string | undefined, options: Ev
     const outputPath = path.join(repoPath, "primer.eval.json");
     try {
       await fs.access(outputPath);
-      console.error(`primer.eval.json already exists at ${outputPath}`);
+      outputError(`primer.eval.json already exists at ${outputPath}`, Boolean(options.json));
       process.exitCode = 1;
       return;
     } catch {
       // File doesn't exist, create it
     }
     await fs.writeFile(outputPath, JSON.stringify(EVAL_SCAFFOLD, null, 2), "utf8");
-    console.log(`Created ${outputPath}`);
-    console.log("Edit the file to add your own test cases, then run 'primer eval' to test.");
+    if (options.json) {
+      const result: CommandResult<{ outputPath: string }> = {
+        ok: true,
+        status: "success",
+        data: { outputPath },
+      };
+      outputResult(result, true);
+    } else {
+      console.log(`Created ${outputPath}`);
+      console.log("Edit the file to add your own test cases, then run 'primer eval' to test.");
+    }
     return;
   }
 
   const configPath = path.resolve(configPathArg ?? path.join(repoPath, "primer.eval.json"));
 
-  const { summary } = await runEval({
+  const { summary, results } = await runEval({
     configPath,
     repoPath,
     model: options.model ?? "gpt-5",
@@ -61,5 +72,14 @@ export async function evalCommand(configPathArg: string | undefined, options: Ev
     outputPath: options.output
   });
 
-  console.log(summary);
+  if (options.json) {
+    const cmdResult: CommandResult<typeof results> = {
+      ok: true,
+      status: "success",
+      data: results,
+    };
+    outputResult(cmdResult, true);
+  } else {
+    console.log(summary);
+  }
 }

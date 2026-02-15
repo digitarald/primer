@@ -42,11 +42,144 @@ The easiest way to get started is with the `init` command:
 # Interactive setup for current directory
 npx tsx src/index.ts init
 
-# Accept defaults and generate instructions automatically
+# Accept defaults — generates instructions, MCP, and VS Code configs
 npx tsx src/index.ts init --yes
 
 # Work with a GitHub repository
 npx tsx src/index.ts init --github
+
+# JSON output for scripting
+npx tsx src/index.ts init --yes --json
+```
+
+### Analyze Repository
+
+```bash
+# Analyze current directory
+npx tsx src/index.ts analyze
+
+# Analyze specific path with JSON output
+npx tsx src/index.ts analyze /path/to/repo --json
+
+# Extract specific fields
+npx tsx src/index.ts analyze --json | jq '.data.languages'
+```
+
+### Generate Instructions
+
+```bash
+# Generate instructions for current directory
+npx tsx src/index.ts instructions
+
+# Generate for specific repo with custom output
+npx tsx src/index.ts instructions --repo /path/to/repo --output ./instructions.md
+
+# Use a specific model
+npx tsx src/index.ts instructions --model gpt-5
+
+# JSON output includes output path, model, and byte count
+npx tsx src/index.ts instructions --json
+```
+
+### Generate Configs
+
+Generate MCP and VS Code configuration files for your repo:
+
+```bash
+# Generate MCP config
+npx tsx src/index.ts generate mcp
+
+# Generate VS Code settings (overwrite existing)
+npx tsx src/index.ts generate vscode --force
+
+# JSON output shows which files were written or skipped
+npx tsx src/index.ts generate mcp --json
+```
+
+### Create Pull Requests
+
+Automatically create a PR to add Primer configs to a repository:
+
+```bash
+# Create PR for a GitHub repo
+npx tsx src/index.ts pr owner/repo-name
+
+# Use custom branch name
+npx tsx src/index.ts pr owner/repo-name --branch primer/custom-branch
+
+# JSON output returns PR URL and number
+npx tsx src/index.ts pr owner/repo-name --json
+```
+
+### Batch Processing
+
+Process multiple repositories across organizations.
+
+**Interactive mode** (TUI — no arguments):
+
+```bash
+# Launch batch TUI to select orgs and repos interactively
+npx tsx src/index.ts batch
+
+# Save results to file
+npx tsx src/index.ts batch --output results.json
+```
+
+**Headless mode** (positional args or stdin):
+
+```bash
+# Process specific repos
+npx tsx src/index.ts batch owner/repo-a owner/repo-b
+
+# Pipe repos from stdin (one owner/repo per line)
+echo -e "owner/repo-a\nowner/repo-b" | npx tsx src/index.ts batch
+
+# JSON output for CI pipelines
+npx tsx src/index.ts batch owner/repo-a --json
+
+# Combine with --output to write results to file
+npx tsx src/index.ts batch owner/repo-a owner/repo-b --json --output results.json
+```
+
+Headless mode bypasses the TUI entirely — no TTY needed. Exit code is `1` if any repo fails.
+
+**Batch TUI Keys:**
+- `[Space]` Toggle selection
+- `[A]` Select all repos without instructions
+- `[Enter]` Confirm selection
+- `[Y/N]` Confirm/cancel processing
+- `[Q]` Quit
+
+### Evaluation Framework
+
+Test how well your instructions improve AI responses:
+
+```bash
+# Create a starter eval config
+npx tsx src/index.ts eval --init
+
+# Run evaluation
+npx tsx src/index.ts eval primer.eval.json --repo /path/to/repo
+
+# Save results and use specific models
+npx tsx src/index.ts eval --output results.json --model gpt-5 --judge-model gpt-5
+
+# JSON output for CI integration
+npx tsx src/index.ts eval --json
+```
+
+Example `primer.eval.json`:
+```json
+{
+  "instructionFile": ".github/copilot-instructions.md",
+  "cases": [
+    {
+      "id": "project-overview",
+      "prompt": "Summarize what this project does and list the main entry points.",
+      "expectation": "Should mention the primary purpose and key files/directories."
+    }
+  ]
+}
 ```
 
 ### Interactive Mode (TUI)
@@ -69,132 +202,42 @@ npx tsx src/index.ts tui --no-animation
 - `[D]` Discard - Discard generated instructions (in preview mode)
 - `[Q]` Quit
 
-### Generate Instructions
+### Other Commands
 
 ```bash
-# Generate instructions for current directory
-npx tsx src/index.ts instructions
-
-# Generate for specific repo with custom output
-npx tsx src/index.ts instructions --repo /path/to/repo --output ./instructions.md
-
-# Use a specific model
-npx tsx src/index.ts instructions --model gpt-5
+npx tsx src/index.ts templates   # View available instruction templates
+npx tsx src/index.ts config      # View Primer configuration
+npx tsx src/index.ts update      # Check for updates
 ```
 
-### Batch Processing
+### Global Options
 
-Process multiple repositories across organizations:
+All commands support:
 
-```bash
-# Launch batch TUI
-npx tsx src/index.ts batch
+| Flag | Description |
+|------|-------------|
+| `--json` | Output machine-readable JSON to stdout (progress goes to stderr) |
+| `--quiet` | Suppress stderr progress output |
 
-# Save results to file
-npx tsx src/index.ts batch --output results.json
-```
+When `--json` is set, every command emits a single `CommandResult` JSON object to stdout:
 
-**Batch TUI Keys:**
-- `[Space]` Toggle selection
-- `[A]` Select all repos
-- `[Enter]` Confirm selection
-- `[Y/N]` Confirm/cancel processing
-- `[Q]` Quit
-
-### Analyze Repository
-
-```bash
-# Analyze current directory
-npx tsx src/index.ts analyze
-
-# Analyze specific path with JSON output
-npx tsx src/index.ts analyze /path/to/repo --json
-```
-
-### Generate Configs
-
-Generate configuration files for your repo:
-
-```bash
-# Generate MCP config
-npx tsx src/index.ts generate mcp
-
-# Generate VS Code settings
-npx tsx src/index.ts generate vscode --force
-
-# Generate custom prompts
-npx tsx src/index.ts generate prompts
-
-# Generate agent configs
-npx tsx src/index.ts generate agents
-
-# Generate .aiignore file
-npx tsx src/index.ts generate aiignore
-```
-
-### Manage Templates
-
-View available instruction templates:
-
-```bash
-npx tsx src/index.ts templates
-```
-
-### Configuration
-
-View and manage Primer configuration:
-
-```bash
-npx tsx src/index.ts config
-```
-
-### Update
-
-Check for and apply updates:
-
-```bash
-npx tsx src/index.ts update
-```
-
-### Create Pull Requests
-
-Automatically create a PR to add Primer configs to a repository:
-
-```bash
-# Create PR for a GitHub repo
-npx tsx src/index.ts pr owner/repo-name
-
-# Use custom branch name
-npx tsx src/index.ts pr owner/repo-name --branch primer/custom-branch
-```
-
-### Evaluation Framework
-
-Test how well your instructions improve AI responses:
-
-```bash
-# Create a starter eval config
-npx tsx src/index.ts eval --init
-
-# Run evaluation
-npx tsx src/index.ts eval primer.eval.json --repo /path/to/repo
-
-# Save results and use specific models
-npx tsx src/index.ts eval --output results.json --model gpt-5 --judge-model gpt-5
-```
-
-Example `primer.eval.json`:
-```json
+```jsonc
 {
-  "instructionFile": ".github/copilot-instructions.md",
-  "cases": [
-    {
-      "id": "project-overview",
-      "prompt": "Summarize what this project does and list the main entry points.",
-      "expectation": "Should mention the primary purpose and key files/directories."
-    }
-  ]
+  "ok": true,           // false on error
+  "status": "success",  // "success" | "partial" | "error"
+  "data": { ... },      // command-specific payload
+  "errors": []          // present only on failure
 }
+```
+
+This makes Primer fully scriptable — pipe output to `jq`, parse from CI, or chain commands:
+
+```bash
+# Pipe JSON to jq
+npx tsx src/index.ts analyze --json | jq '.data.languages'
+
+# Use exit codes in scripts
+npx tsx src/index.ts generate mcp --json || echo "failed"
 ```
 
 ## How It Works
@@ -233,13 +276,14 @@ primer/
 │   │   ├── eval.ts           # Evaluation framework
 │   │   ├── generate.ts       # Config generation
 │   │   ├── init.ts           # Interactive setup
-│   │   ├── instructions.tsx  # Instructions generation
+│   │   ├── instructions.ts   # Instructions generation
 │   │   ├── pr.ts             # PR creation
 │   │   ├── templates.ts      # Template management
 │   │   ├── tui.tsx           # TUI launcher
 │   │   └── update.ts         # Update command
 │   ├── services/             # Core business logic
 │   │   ├── analyzer.ts       # Repository analysis
+│   │   ├── batch.ts          # Per-repo processing pipeline (shared by TUI & headless)
 │   │   ├── evaluator.ts      # Eval runner
 │   │   ├── generator.ts      # Config generation
 │   │   ├── git.ts            # Git operations
@@ -251,7 +295,8 @@ primer/
 │   │   └── tui.tsx           # Main TUI
 │   └── utils/                # Helpers
 │       ├── fs.ts
-│       └── logger.ts
+│       ├── logger.ts
+│       └── output.ts         # Structured JSON output & progress reporting
 ├── package.json
 ├── tsconfig.json
 ├── primer.eval.json          # Example eval config

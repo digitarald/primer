@@ -8,11 +8,13 @@ import { cloneRepo, isGitRepo } from "../services/git";
 import { generateCopilotInstructions } from "../services/instructions";
 import { ensureDir } from "../utils/fs";
 import { prettyPrintSummary } from "../utils/logger";
+import { outputResult, outputError, type CommandResult } from "../utils/output";
 
 type InitOptions = {
   github?: boolean;
   yes?: boolean;
   force?: boolean;
+  json?: boolean;
 };
 
 export async function initCommand(repoPathArg: string | undefined, options: InitOptions): Promise<void> {
@@ -21,14 +23,14 @@ export async function initCommand(repoPathArg: string | undefined, options: Init
   if (options.github) {
     const token = process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN;
     if (!token) {
-      console.error("Set GITHUB_TOKEN or GH_TOKEN to use GitHub mode.");
+      outputError("Set GITHUB_TOKEN or GH_TOKEN to use GitHub mode.", Boolean(options.json));
       process.exitCode = 1;
       return;
     }
 
     const repos = await listAccessibleRepos(token);
     if (repos.length === 0) {
-      console.error("No accessible repositories found.");
+      outputError("No accessible repositories found.", Boolean(options.json));
       process.exitCode = 1;
       return;
     }
@@ -54,7 +56,7 @@ export async function initCommand(repoPathArg: string | undefined, options: Init
   prettyPrintSummary(analysis);
 
   const selections = options.yes
-    ? ["instructions"]
+    ? ["instructions", "mcp", "vscode"]
     : await checkbox({
         message: "What would you like to generate?",
         choices: [
@@ -68,9 +70,20 @@ export async function initCommand(repoPathArg: string | undefined, options: Init
   if (selections.includes("instructions")) {
     const outputPath = path.join(repoPath, ".github", "copilot-instructions.md");
     await ensureDir(path.dirname(outputPath));
-    const content = await generateCopilotInstructions({ repoPath });
-    await fs.writeFile(outputPath, content, "utf8");
-    console.log(`Updated ${path.relative(process.cwd(), outputPath)}`);
+    try {
+      const content = await generateCopilotInstructions({ repoPath });
+      await fs.writeFile(outputPath, content, "utf8");
+      if (!options.json) {
+        console.log(`Updated ${path.relative(process.cwd(), outputPath)}`);
+      }
+    } catch (error) {
+      outputError(
+        `Failed to generate instructions: ${error instanceof Error ? error.message : String(error)}`,
+        Boolean(options.json),
+      );
+      process.exitCode = 1;
+      return;
+    }
   }
 
   const result = await generateConfigs({
@@ -80,5 +93,16 @@ export async function initCommand(repoPathArg: string | undefined, options: Init
     force: Boolean(options.force)
   });
 
-  console.log(result.summary);
+  if (options.json) {
+    const cmdResult: CommandResult<{ selections: string[]; files: typeof result.files; analysis: typeof analysis }> = {
+      ok: true,
+      status: "success",
+      data: { selections: [...selections], files: result.files, analysis },
+    };
+    outputResult(cmdResult, true);
+  } else {
+    for (const f of result.files) {
+      console.log(`${f.action === "wrote" ? "Wrote" : "Skipped"} ${f.path}`);
+    }
+  }
 }
