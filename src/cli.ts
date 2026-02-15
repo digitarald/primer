@@ -66,6 +66,10 @@ export function runCli(argv: string[]): void {
     .option("--repo <path>", "Repository path", process.cwd())
     .option("--output <path>", "Output path for copilot instructions")
     .option("--model <name>", "Model for instructions generation", DEFAULT_MODEL)
+    .option("--force", "Overwrite existing area instruction files")
+    .option("--areas", "Also generate file-based instructions for detected areas")
+    .option("--areas-only", "Generate only file-based area instructions (skip root)")
+    .option("--area <name>", "Generate file-based instructions for a specific area")
     .action(instructionsCommand);
 
   program
@@ -74,6 +78,7 @@ export function runCli(argv: string[]): void {
     .option("--json", "Output JSON")
     .option("--output <path>", "Write report to file (.json or .html)")
     .option("--visual", "Generate visual HTML report")
+    .option("--per-area", "Show per-area readiness breakdown")
     .action(readinessCommand);
 
   program
