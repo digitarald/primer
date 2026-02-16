@@ -11,16 +11,13 @@ const buildOptions = {
   platform: "node",
   target: "node22",
   outfile: "out/extension.js",
-  external: [
-    "vscode",
-    "@github/copilot-sdk",
-  ],
+  external: ["vscode", "@github/copilot-sdk"],
   sourcemap: !production,
   minify: production,
   alias: {
     // Resolve Primer source imports via the parent src/ directory
-    "primer": "../src",
-  },
+    primer: "../src"
+  }
 };
 
 async function main() {
