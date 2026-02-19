@@ -179,7 +179,33 @@ async function hasSymlinkAncestor(filePath: string): Promise<boolean> {
     realClosestAncestor !== closestExistingAncestor &&
     !isAllowedSystemAlias(closestExistingAncestor, realClosestAncestor)
   ) {
-    return true;
+    // On Windows, 8.3 short filenames (e.g. RUNNER~1 → runneradmin) cause
+    // realpath to differ without any symlinks. Walk each ancestor component
+    // to check for actual symlinks before concluding.
+    if (process.platform === "win32") {
+      const parsed = path.parse(closestExistingAncestor);
+      const relative = path.relative(parsed.root, closestExistingAncestor);
+      const components = relative.split(path.sep).filter(Boolean);
+      let current = parsed.root;
+      let foundSymlink = false;
+      for (const component of components) {
+        current = path.join(current, component);
+        try {
+          const stat = await fs.lstat(current);
+          if (stat.isSymbolicLink()) {
+            foundSymlink = true;
+            break;
+          }
+        } catch {
+          break;
+        }
+      }
+      if (foundSymlink) {
+        return true;
+      }
+    } else {
+      return true;
+    }
   }
 
   const relativeParent = path.relative(closestExistingAncestor, parentDir);
@@ -228,13 +254,6 @@ async function findClosestExistingAncestor(targetDir: string): Promise<string> {
 }
 
 function isAllowedSystemAlias(originalPath: string, realPath: string): boolean {
-  // On Windows, 8.3 short filenames (e.g. RUNNER~1 → runneradmin) cause
-  // realpath to differ from the original path. Since we already confirmed
-  // via lstat that the path is not a symlink, treat the difference as safe.
-  if (process.platform === "win32") {
-    return true;
-  }
-
   if (process.platform !== "darwin") {
     return false;
   }
