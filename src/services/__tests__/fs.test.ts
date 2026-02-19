@@ -1,7 +1,7 @@
+import type { PathLike } from "fs";
 import fs from "fs/promises";
 import os from "os";
 import path from "path";
-import type { PathLike } from "fs";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 

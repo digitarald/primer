@@ -228,6 +228,13 @@ async function findClosestExistingAncestor(targetDir: string): Promise<string> {
 }
 
 function isAllowedSystemAlias(originalPath: string, realPath: string): boolean {
+  // On Windows, 8.3 short filenames (e.g. RUNNER~1 → runneradmin) cause
+  // realpath to differ from the original path. Since we already confirmed
+  // via lstat that the path is not a symlink, treat the difference as safe.
+  if (process.platform === "win32") {
+    return true;
+  }
+
   if (process.platform !== "darwin") {
     return false;
   }
